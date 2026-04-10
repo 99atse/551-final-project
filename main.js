@@ -1,22 +1,23 @@
-const {Client}=require('pg')
+import pg from 'pg'
 
-const con=new Client({
-    host: "localhost", 
-    user: "postgres",
-    port: 5432,
-    password: "root123",
-    database: "event_db"
+const { Client } = pg
+
+const con = new Client({
+  host: 'localhost',
+  user: 'postgres',
+  port: 5432,
+  password: 'root123',
+  database: 'event_db'
 })
 
-con.connect().then(()=> console.log("PostgreSQL DB connected!"))
+await con.connect()
+console.log('PostgreSQL DB connected!')
 
-// Test query
-con.query('SELECT * FROM customers', (err, res)=> {
-    if(!err)
-        {
-            console.log(res.rows)
-        } else {
-            console.log(err.message)
-        }
-        con.end;
-})
+try {
+  const res = await con.query('SELECT * FROM customers')
+  console.log(res.rows)
+} catch (err) {
+  console.log(err.message)
+} finally {
+  await con.end()
+}
