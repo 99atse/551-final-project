@@ -27,8 +27,8 @@ CREATE TABLE venues (
 	max_capacity INT NOT NULL,
 	contact_name VARCHAR(255) NOT NULL,
 	contact_phone VARCHAR(20) NOT NULL,
-	contact_email VARCHAR(255) NOT null,
-	rating
+	contact_email VARCHAR(255) NOT NULL,
+	rating DECIMAL(3, 2),
 );
 
 /* Create customers table*/
@@ -42,8 +42,8 @@ CREATE TABLE customers (
 	address VARCHAR(255),
 	affiliated_organization VARCHAR(255),
 	contact_phone VARCHAR(20) NOT NULL,
-	contact_email VARCHAR(255) NOT null,
-	rating
+	contact_email VARCHAR(255) NOT NULL,
+	rating DECIMAL(3, 2),
 );
 
 /* Create events table (depends on venues) */
@@ -58,7 +58,7 @@ CREATE TABLE events (
 	type VARCHAR(100) NOT NULL,
 	status VARCHAR(20) NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'complete', 'postponed', 'cancelled')),
 	description TEXT,
-	rating
+	rating DECIMAL(3, 2),
 	FOREIGN KEY (venue_id) REFERENCES venues(venue_id)
 );
 
