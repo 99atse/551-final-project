@@ -4,6 +4,8 @@
 
 ## Key Features
 
+### Internal Architecture
+
 ## Getting Started
 
 ### Prerequisites
