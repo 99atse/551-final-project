@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router';
+import { createBrowserRouter } from 'react-router-dom';
 import { UserTypeSelection } from './components/user_type_selection';
 import { Home } from './components/home';
 import { EventQuery } from './components/event_query';
