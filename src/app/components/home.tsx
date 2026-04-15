@@ -1,4 +1,4 @@
-import { useParams, Link } from 'react-router';
+import { useParams, Link } from 'react-router-dom';
 import { Music, Trophy, Heart, Users, Briefcase } from 'lucide-react';
 import { CategoryCard } from './category_card';
 import { mockEvents } from '../data/mock_events';

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Search, Database } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -26,11 +26,50 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import {
-  executeQuery,
-  Event,
-  getTicketStats,
-} from "../data/mock_events";
+
+// Real types matching your PostgreSQL schema
+interface Venue {
+  venue_id: number;
+  name: string;
+  city: string;
+  state: string;
+  venue_type: string;
+  base_rental_rate: number;
+  max_capacity: number;
+  contact_name: string;
+  contact_phone: string;
+  rating: number;
+}
+
+interface Event {
+  event_id: number;
+  name: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  capacity: number;
+  type: string;
+  status: string;
+  description: string;
+  rating: number;
+  venue_id: number;
+  // joined from venues table
+  venue_name: string;
+  city: string;
+  state: string;
+  venue_type: string;
+  base_rental_rate: number;
+  contact_name: string;
+  contact_phone: string;
+  venue_rating: number;
+  // joined from tickets table
+  total_tickets: number;
+  tickets_sold: number;
+  tickets_available: number;
+  tickets_reserved: number;
+  min_ticket_price: number;
+  max_ticket_price: number;
+}
 
 const categoryMap: { [key: string]: string } = {
   "concerts-festivals": "Concerts/Festivals",
@@ -51,7 +90,6 @@ export function EventQuery() {
   const isResearcher = userType === "researcher";
 
   const [filters, setFilters] = useState({
-    // Common filters
     searchTerm: "",
     dateFrom: "",
     dateTo: "",
@@ -60,170 +98,101 @@ export function EventQuery() {
     venueType: "",
     minCapacity: "",
     maxCapacity: "",
-
-    // Attendee-specific filters
     minTicketPrice: "",
     maxTicketPrice: "",
     ticketType: "",
     eventStatus: "",
     minEventRating: "",
-
-    // Organizer-specific filters
     minRentalRate: "",
     maxRentalRate: "",
     minVenueRating: "",
-
-    // Researcher-specific filters
     includeCompleted: false,
     showAllStatuses: false,
   });
 
   const [results, setResults] = useState<Event[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
   const [generatedSQL, setGeneratedSQL] = useState("");
 
-  const handleSearch = () => {
-    const queryFilters = {
-      searchTerm: filters.searchTerm || undefined,
-      dateFrom: filters.dateFrom || undefined,
-      dateTo: filters.dateTo || undefined,
-      city: filters.city || undefined,
-      state: filters.state || undefined,
-      venueType: filters.venueType || undefined,
-      minCapacity: filters.minCapacity
-        ? parseInt(filters.minCapacity)
-        : undefined,
-      maxCapacity: filters.maxCapacity
-        ? parseInt(filters.maxCapacity)
-        : undefined,
-      minTicketPrice: filters.minTicketPrice
-        ? parseFloat(filters.minTicketPrice)
-        : undefined,
-      maxTicketPrice: filters.maxTicketPrice
-        ? parseFloat(filters.maxTicketPrice)
-        : undefined,
-      ticketType: filters.ticketType || undefined,
-      eventStatus: filters.eventStatus || undefined,
-      minEventRating: filters.minEventRating
-        ? parseFloat(filters.minEventRating)
-        : undefined,
-      minRentalRate: filters.minRentalRate
-        ? parseFloat(filters.minRentalRate)
-        : undefined,
-      maxRentalRate: filters.maxRentalRate
-        ? parseFloat(filters.maxRentalRate)
-        : undefined,
-      minVenueRating: filters.minVenueRating
-        ? parseFloat(filters.minVenueRating)
-        : undefined,
-      includeCompleted: filters.includeCompleted || undefined,
-    };
+  const handleSearch = async () => {
+    setIsLoading(true);
+    setError("");
 
-    const events = executeQuery(
-      categoryName,
-      userType!,
-      queryFilters,
-    );
-    setResults(events);
-    setHasSearched(true);
+    // Build query params to send to Express
+    const params = new URLSearchParams();
+    params.append("type", categoryName);
 
-    // Generate SQL query for display
-    generateSQLQuery(categoryName, queryFilters);
+    if (filters.searchTerm) params.append("search", filters.searchTerm);
+    if (filters.dateFrom)   params.append("dateFrom", filters.dateFrom);
+    if (filters.dateTo)     params.append("dateTo", filters.dateTo);
+    if (filters.city)       params.append("city", filters.city);
+    if (filters.state)      params.append("state", filters.state);
+    if (filters.venueType)  params.append("venueType", filters.venueType);
+    if (filters.minCapacity) params.append("minCapacity", filters.minCapacity);
+    if (filters.maxCapacity) params.append("maxCapacity", filters.maxCapacity);
+    if (filters.minTicketPrice) params.append("minTicketPrice", filters.minTicketPrice);
+    if (filters.maxTicketPrice) params.append("maxTicketPrice", filters.maxTicketPrice);
+    if (filters.ticketType) params.append("ticketType", filters.ticketType);
+    if (filters.minEventRating) params.append("minEventRating", filters.minEventRating);
+    if (filters.minRentalRate) params.append("minRentalRate", filters.minRentalRate);
+    if (filters.maxRentalRate) params.append("maxRentalRate", filters.maxRentalRate);
+    if (filters.minVenueRating) params.append("minVenueRating", filters.minVenueRating);
+    if (filters.includeCompleted) params.append("includeCompleted", "true");
+
+    if (filters.eventStatus && filters.eventStatus !== "all") {
+      params.append("status", filters.eventStatus);
+    } else if (!isResearcher) {
+      params.append("status", "scheduled");
+    }
+
+    try {
+      const res = await fetch(`/api/events?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch events");
+      const data = await res.json();
+      setResults(data);
+      setHasSearched(true);
+      generateSQLQuery(params);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const generateSQLQuery = (
-    category: string,
-    queryFilters: any,
-  ) => {
-    let sql = `SELECT e.*, v.*, COUNT(t.ticket_id) as total_tickets,
+  const generateSQLQuery = (params: URLSearchParams) => {
+    let sql = `SELECT e.*, v.name as venue_name, v.city, v.state,
+       v.venue_type, v.base_rental_rate, v.contact_name,
+       v.contact_phone, v.rating as venue_rating,
+       COUNT(t.ticket_id) as total_tickets,
        SUM(CASE WHEN t.status = 'sold' THEN 1 ELSE 0 END) as tickets_sold,
        SUM(CASE WHEN t.status = 'available' THEN 1 ELSE 0 END) as tickets_available
 FROM events e
 JOIN venues v ON e.venue_id = v.venue_id
 LEFT JOIN tickets t ON e.event_id = t.event_id
-WHERE e.type = '${category}'`;
+WHERE e.type = '${params.get("type")}'`;
 
-    if (!isResearcher || !queryFilters.includeCompleted) {
-      sql += `\n  AND e.status = 'scheduled'`;
-    }
+    if (params.get("status"))     sql += `\n  AND e.status = '${params.get("status")}'`;
+    if (params.get("search"))     sql += `\n  AND (e.name ILIKE '%${params.get("search")}%' OR v.name ILIKE '%${params.get("search")}%')`;
+    if (params.get("dateFrom"))   sql += `\n  AND e.date >= '${params.get("dateFrom")}'`;
+    if (params.get("dateTo"))     sql += `\n  AND e.date <= '${params.get("dateTo")}'`;
+    if (params.get("city"))       sql += `\n  AND v.city ILIKE '%${params.get("city")}%'`;
+    if (params.get("state"))      sql += `\n  AND v.state = '${params.get("state")}'`;
+    if (params.get("venueType"))  sql += `\n  AND v.venue_type ILIKE '%${params.get("venueType")}%'`;
+    if (params.get("minCapacity")) sql += `\n  AND e.capacity >= ${params.get("minCapacity")}`;
+    if (params.get("maxCapacity")) sql += `\n  AND e.capacity <= ${params.get("maxCapacity")}`;
+    if (params.get("minEventRating")) sql += `\n  AND e.rating >= ${params.get("minEventRating")}`;
+    if (params.get("minRentalRate"))  sql += `\n  AND v.base_rental_rate >= ${params.get("minRentalRate")}`;
+    if (params.get("maxRentalRate"))  sql += `\n  AND v.base_rental_rate <= ${params.get("maxRentalRate")}`;
+    if (params.get("minVenueRating")) sql += `\n  AND v.rating >= ${params.get("minVenueRating")}`;
 
-    if (queryFilters.eventStatus) {
-      sql += `\n  AND e.status = '${queryFilters.eventStatus}'`;
-    }
+    sql += `\nGROUP BY e.event_id, v.venue_id`;
 
-    if (queryFilters.searchTerm) {
-      sql += `\n  AND (e.name LIKE '%${queryFilters.searchTerm}%'`;
-      sql += `\n       OR e.description LIKE '%${queryFilters.searchTerm}%'`;
-      sql += `\n       OR v.name LIKE '%${queryFilters.searchTerm}%')`;
-    }
+    if (params.get("minTicketPrice")) sql += `\nHAVING MIN(t.face_value_price) >= ${params.get("minTicketPrice")}`;
+    if (params.get("maxTicketPrice")) sql += `\n  AND MAX(t.face_value_price) <= ${params.get("maxTicketPrice")}`;
 
-    if (queryFilters.dateFrom) {
-      sql += `\n  AND e.date >= '${queryFilters.dateFrom}'`;
-    }
-
-    if (queryFilters.dateTo) {
-      sql += `\n  AND e.date <= '${queryFilters.dateTo}'`;
-    }
-
-    if (queryFilters.city) {
-      sql += `\n  AND v.city LIKE '%${queryFilters.city}%'`;
-    }
-
-    if (queryFilters.state) {
-      sql += `\n  AND v.state = '${queryFilters.state}'`;
-    }
-
-    if (queryFilters.venueType) {
-      sql += `\n  AND v.venue_type LIKE '%${queryFilters.venueType}%'`;
-    }
-
-    if (queryFilters.minCapacity !== undefined) {
-      sql += `\n  AND e.capacity >= ${queryFilters.minCapacity}`;
-    }
-
-    if (queryFilters.maxCapacity !== undefined) {
-      sql += `\n  AND e.capacity <= ${queryFilters.maxCapacity}`;
-    }
-
-    if (queryFilters.minEventRating !== undefined) {
-      sql += `\n  AND e.rating >= ${queryFilters.minEventRating}`;
-    }
-
-    if (queryFilters.minRentalRate !== undefined) {
-      sql += `\n  AND v.base_rental_rate >= ${queryFilters.minRentalRate}`;
-    }
-
-    if (queryFilters.maxRentalRate !== undefined) {
-      sql += `\n  AND v.base_rental_rate <= ${queryFilters.maxRentalRate}`;
-    }
-
-    if (queryFilters.minVenueRating !== undefined) {
-      sql += `\n  AND v.rating >= ${queryFilters.minVenueRating}`;
-    }
-
-    if (
-      queryFilters.minTicketPrice !== undefined ||
-      queryFilters.maxTicketPrice !== undefined
-    ) {
-      sql += `\nGROUP BY e.event_id, v.venue_id\nHAVING 1=1`;
-      if (queryFilters.minTicketPrice !== undefined) {
-        sql += `\n  AND MAX(t.face_value_price) >= ${queryFilters.minTicketPrice}`;
-      }
-      if (queryFilters.maxTicketPrice !== undefined) {
-        sql += `\n  AND MIN(t.face_value_price) <= ${queryFilters.maxTicketPrice}`;
-      }
-    } else {
-      sql += `\nGROUP BY e.event_id, v.venue_id`;
-    }
-
-    if (queryFilters.ticketType) {
-      sql = sql.replace(
-        "WHERE e.type",
-        `WHERE e.event_id IN (\n  SELECT DISTINCT event_id FROM tickets WHERE type LIKE '%${queryFilters.ticketType}%'\n)\nAND e.type`,
-      );
-    }
-
-    sql += ";";
+    sql += `\nORDER BY e.date ASC;`;
     setGeneratedSQL(sql);
   };
 
@@ -251,6 +220,7 @@ WHERE e.type = '${category}'`;
     setResults([]);
     setHasSearched(false);
     setGeneratedSQL("");
+    setError("");
   };
 
   const userTypeLabel = isAttendee
@@ -292,46 +262,26 @@ WHERE e.type = '${category}'`;
                     Query Filters
                   </CardTitle>
                   <CardDescription>
-                    {isAttendee &&
-                      "Search for events to attend"}
+                    {isAttendee && "Search for events to attend"}
                     {isOrganizer && "Find and compare venues"}
-                    {isResearcher &&
-                      "Analyze historical event data"}
+                    {isResearcher && "Analyze historical event data"}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Tabs defaultValue="basic" className="w-full">
                     <TabsList className="grid w-full grid-cols-2">
-                      <TabsTrigger value="basic">
-                        Basic
-                      </TabsTrigger>
-                      <TabsTrigger value="advanced">
-                        Advanced
-                      </TabsTrigger>
+                      <TabsTrigger value="basic">Basic</TabsTrigger>
+                      <TabsTrigger value="advanced">Advanced</TabsTrigger>
                     </TabsList>
 
-                    <TabsContent
-                      value="basic"
-                      className="space-y-4 mt-4"
-                    >
+                    <TabsContent value="basic" className="space-y-4 mt-4">
                       <div>
-                        <Label htmlFor="searchTerm">
-                          Search
-                        </Label>
+                        <Label htmlFor="searchTerm">Search</Label>
                         <Input
                           id="searchTerm"
-                          placeholder={
-                            isOrganizer
-                              ? "Venue name..."
-                              : "Event name, venue..."
-                          }
+                          placeholder={isOrganizer ? "Venue name..." : "Event name, venue..."}
                           value={filters.searchTerm}
-                          onChange={(e) =>
-                            setFilters({
-                              ...filters,
-                              searchTerm: e.target.value,
-                            })
-                          }
+                          onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
                         />
                       </div>
 
@@ -342,12 +292,7 @@ WHERE e.type = '${category}'`;
                             id="city"
                             placeholder="e.g. Boston"
                             value={filters.city}
-                            onChange={(e) =>
-                              setFilters({
-                                ...filters,
-                                city: e.target.value,
-                              })
-                            }
+                            onChange={(e) => setFilters({ ...filters, city: e.target.value })}
                           />
                         </div>
                         <div>
@@ -357,31 +302,18 @@ WHERE e.type = '${category}'`;
                             placeholder="e.g. MA"
                             maxLength={2}
                             value={filters.state}
-                            onChange={(e) =>
-                              setFilters({
-                                ...filters,
-                                state:
-                                  e.target.value.toUpperCase(),
-                              })
-                            }
+                            onChange={(e) => setFilters({ ...filters, state: e.target.value.toUpperCase() })}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <Label htmlFor="dateFrom">
-                          Date From
-                        </Label>
+                        <Label htmlFor="dateFrom">Date From</Label>
                         <Input
                           id="dateFrom"
                           type="date"
                           value={filters.dateFrom}
-                          onChange={(e) =>
-                            setFilters({
-                              ...filters,
-                              dateFrom: e.target.value,
-                            })
-                          }
+                          onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
                         />
                       </div>
 
@@ -391,12 +323,7 @@ WHERE e.type = '${category}'`;
                           id="dateTo"
                           type="date"
                           value={filters.dateTo}
-                          onChange={(e) =>
-                            setFilters({
-                              ...filters,
-                              dateTo: e.target.value,
-                            })
-                          }
+                          onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
                         />
                       </div>
 
@@ -404,72 +331,41 @@ WHERE e.type = '${category}'`;
                         <>
                           <div className="grid grid-cols-2 gap-2">
                             <div>
-                              <Label htmlFor="minTicketPrice">
-                                Min Price ($)
-                              </Label>
+                              <Label htmlFor="minTicketPrice">Min Price ($)</Label>
                               <Input
                                 id="minTicketPrice"
                                 type="number"
                                 placeholder="0"
                                 value={filters.minTicketPrice}
-                                onChange={(e) =>
-                                  setFilters({
-                                    ...filters,
-                                    minTicketPrice:
-                                      e.target.value,
-                                  })
-                                }
+                                onChange={(e) => setFilters({ ...filters, minTicketPrice: e.target.value })}
                               />
                             </div>
                             <div>
-                              <Label htmlFor="maxTicketPrice">
-                                Max Price ($)
-                              </Label>
+                              <Label htmlFor="maxTicketPrice">Max Price ($)</Label>
                               <Input
                                 id="maxTicketPrice"
                                 type="number"
                                 placeholder="1000"
                                 value={filters.maxTicketPrice}
-                                onChange={(e) =>
-                                  setFilters({
-                                    ...filters,
-                                    maxTicketPrice:
-                                      e.target.value,
-                                  })
-                                }
+                                onChange={(e) => setFilters({ ...filters, maxTicketPrice: e.target.value })}
                               />
                             </div>
                           </div>
 
                           <div>
-                            <Label htmlFor="ticketType">
-                              Ticket Type
-                            </Label>
+                            <Label htmlFor="ticketType">Ticket Type</Label>
                             <Select
                               value={filters.ticketType}
-                              onValueChange={(value) =>
-                                setFilters({
-                                  ...filters,
-                                  ticketType: value,
-                                })
-                              }
+                              onValueChange={(value) => setFilters({ ...filters, ticketType: value })}
                             >
                               <SelectTrigger id="ticketType">
                                 <SelectValue placeholder="Any type" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="All">
-                                  Any type
-                                </SelectItem>
-                                <SelectItem value="General Admission">
-                                  General Admission
-                                </SelectItem>
-                                <SelectItem value="VIP">
-                                  VIP
-                                </SelectItem>
-                                <SelectItem value="Premium">
-                                  Premium
-                                </SelectItem>
+                                <SelectItem value="All">Any type</SelectItem>
+                                <SelectItem value="General Admission">General Admission</SelectItem>
+                                <SelectItem value="VIP">VIP</SelectItem>
+                                <SelectItem value="Premium">Premium</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
@@ -479,57 +375,33 @@ WHERE e.type = '${category}'`;
                       {isOrganizer && (
                         <>
                           <div>
-                            <Label htmlFor="venueType">
-                              Venue Type
-                            </Label>
+                            <Label htmlFor="venueType">Venue Type</Label>
                             <Input
                               id="venueType"
                               placeholder="e.g. Convention Center"
                               value={filters.venueType}
-                              onChange={(e) =>
-                                setFilters({
-                                  ...filters,
-                                  venueType: e.target.value,
-                                })
-                              }
+                              onChange={(e) => setFilters({ ...filters, venueType: e.target.value })}
                             />
                           </div>
-
                           <div className="grid grid-cols-2 gap-2">
                             <div>
-                              <Label htmlFor="minRentalRate">
-                                Min Rate ($)
-                              </Label>
+                              <Label htmlFor="minRentalRate">Min Rate ($)</Label>
                               <Input
                                 id="minRentalRate"
                                 type="number"
                                 placeholder="0"
                                 value={filters.minRentalRate}
-                                onChange={(e) =>
-                                  setFilters({
-                                    ...filters,
-                                    minRentalRate:
-                                      e.target.value,
-                                  })
-                                }
+                                onChange={(e) => setFilters({ ...filters, minRentalRate: e.target.value })}
                               />
                             </div>
                             <div>
-                              <Label htmlFor="maxRentalRate">
-                                Max Rate ($)
-                              </Label>
+                              <Label htmlFor="maxRentalRate">Max Rate ($)</Label>
                               <Input
                                 id="maxRentalRate"
                                 type="number"
                                 placeholder="200000"
                                 value={filters.maxRentalRate}
-                                onChange={(e) =>
-                                  setFilters({
-                                    ...filters,
-                                    maxRentalRate:
-                                      e.target.value,
-                                  })
-                                }
+                                onChange={(e) => setFilters({ ...filters, maxRentalRate: e.target.value })}
                               />
                             </div>
                           </div>
@@ -537,69 +409,43 @@ WHERE e.type = '${category}'`;
                       )}
                     </TabsContent>
 
-                    <TabsContent
-                      value="advanced"
-                      className="space-y-4 mt-4"
-                    >
+                    <TabsContent value="advanced" className="space-y-4 mt-4">
                       <div>
-                        <Label htmlFor="venueType">
-                          Venue Type
-                        </Label>
+                        <Label htmlFor="venueType">Venue Type</Label>
                         <Input
                           id="venueType"
                           placeholder="e.g. Stadium, Arena"
                           value={filters.venueType}
-                          onChange={(e) =>
-                            setFilters({
-                              ...filters,
-                              venueType: e.target.value,
-                            })
-                          }
+                          onChange={(e) => setFilters({ ...filters, venueType: e.target.value })}
                         />
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <Label htmlFor="minCapacity">
-                            Min Capacity
-                          </Label>
+                          <Label htmlFor="minCapacity">Min Capacity</Label>
                           <Input
                             id="minCapacity"
                             type="number"
                             placeholder="0"
                             value={filters.minCapacity}
-                            onChange={(e) =>
-                              setFilters({
-                                ...filters,
-                                minCapacity: e.target.value,
-                              })
-                            }
+                            onChange={(e) => setFilters({ ...filters, minCapacity: e.target.value })}
                           />
                         </div>
                         <div>
-                          <Label htmlFor="maxCapacity">
-                            Max Capacity
-                          </Label>
+                          <Label htmlFor="maxCapacity">Max Capacity</Label>
                           <Input
                             id="maxCapacity"
                             type="number"
                             placeholder="100000"
                             value={filters.maxCapacity}
-                            onChange={(e) =>
-                              setFilters({
-                                ...filters,
-                                maxCapacity: e.target.value,
-                              })
-                            }
+                            onChange={(e) => setFilters({ ...filters, maxCapacity: e.target.value })}
                           />
                         </div>
                       </div>
 
                       {(isAttendee || isResearcher) && (
                         <div>
-                          <Label htmlFor="minEventRating">
-                            Min Event Rating
-                          </Label>
+                          <Label htmlFor="minEventRating">Min Event Rating</Label>
                           <Input
                             id="minEventRating"
                             type="number"
@@ -608,12 +454,7 @@ WHERE e.type = '${category}'`;
                             max="5"
                             step="0.1"
                             value={filters.minEventRating}
-                            onChange={(e) =>
-                              setFilters({
-                                ...filters,
-                                minEventRating: e.target.value,
-                              })
-                            }
+                            onChange={(e) => setFilters({ ...filters, minEventRating: e.target.value })}
                           />
                         </div>
                       )}
@@ -621,9 +462,7 @@ WHERE e.type = '${category}'`;
                       {(isOrganizer || isResearcher) && (
                         <>
                           <div>
-                            <Label htmlFor="minVenueRating">
-                              Min Venue Rating
-                            </Label>
+                            <Label htmlFor="minVenueRating">Min Venue Rating</Label>
                             <Input
                               id="minVenueRating"
                               type="number"
@@ -632,52 +471,29 @@ WHERE e.type = '${category}'`;
                               max="5"
                               step="0.1"
                               value={filters.minVenueRating}
-                              onChange={(e) =>
-                                setFilters({
-                                  ...filters,
-                                  minVenueRating:
-                                    e.target.value,
-                                })
-                              }
+                              onChange={(e) => setFilters({ ...filters, minVenueRating: e.target.value })}
                             />
                           </div>
-
                           {!isAttendee && (
                             <div className="grid grid-cols-2 gap-2">
                               <div>
-                                <Label htmlFor="minRentalRate">
-                                  Min Rental Rate ($)
-                                </Label>
+                                <Label htmlFor="minRentalRate">Min Rental Rate ($)</Label>
                                 <Input
                                   id="minRentalRate"
                                   type="number"
                                   placeholder="0"
                                   value={filters.minRentalRate}
-                                  onChange={(e) =>
-                                    setFilters({
-                                      ...filters,
-                                      minRentalRate:
-                                        e.target.value,
-                                    })
-                                  }
+                                  onChange={(e) => setFilters({ ...filters, minRentalRate: e.target.value })}
                                 />
                               </div>
                               <div>
-                                <Label htmlFor="maxRentalRate">
-                                  Max Rental Rate ($)
-                                </Label>
+                                <Label htmlFor="maxRentalRate">Max Rental Rate ($)</Label>
                                 <Input
                                   id="maxRentalRate"
                                   type="number"
                                   placeholder="200000"
                                   value={filters.maxRentalRate}
-                                  onChange={(e) =>
-                                    setFilters({
-                                      ...filters,
-                                      maxRentalRate:
-                                        e.target.value,
-                                    })
-                                  }
+                                  onChange={(e) => setFilters({ ...filters, maxRentalRate: e.target.value })}
                                 />
                               </div>
                             </div>
@@ -688,77 +504,43 @@ WHERE e.type = '${category}'`;
                       {isResearcher && (
                         <>
                           <div>
-                            <Label htmlFor="eventStatus">
-                              Event Status
-                            </Label>
+                            <Label htmlFor="eventStatus">Event Status</Label>
                             <Select
                               value={filters.eventStatus}
-                              onValueChange={(value) =>
-                                setFilters({
-                                  ...filters,
-                                  eventStatus: value,
-                                })
-                              }
+                              onValueChange={(value) => setFilters({ ...filters, eventStatus: value })}
                             >
                               <SelectTrigger id="eventStatus">
                                 <SelectValue placeholder="All statuses" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="all">
-                                  All statuses
-                                </SelectItem>
-                                <SelectItem value="scheduled">
-                                  Scheduled
-                                </SelectItem>
-                                <SelectItem value="complete">
-                                  Complete
-                                </SelectItem>
-                                <SelectItem value="postponed">
-                                  Postponed
-                                </SelectItem>
-                                <SelectItem value="cancelled">
-                                  Cancelled
-                                </SelectItem>
+                                <SelectItem value="all">All statuses</SelectItem>
+                                <SelectItem value="scheduled">Scheduled</SelectItem>
+                                <SelectItem value="complete">Complete</SelectItem>
+                                <SelectItem value="postponed">Postponed</SelectItem>
+                                <SelectItem value="cancelled">Cancelled</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
-
                           {!isAttendee && (
                             <div className="grid grid-cols-2 gap-2">
                               <div>
-                                <Label htmlFor="minTicketPrice">
-                                  Min Ticket Price ($)
-                                </Label>
+                                <Label htmlFor="minTicketPrice">Min Ticket Price ($)</Label>
                                 <Input
                                   id="minTicketPrice"
                                   type="number"
                                   placeholder="0"
                                   value={filters.minTicketPrice}
-                                  onChange={(e) =>
-                                    setFilters({
-                                      ...filters,
-                                      minTicketPrice:
-                                        e.target.value,
-                                    })
-                                  }
+                                  onChange={(e) => setFilters({ ...filters, minTicketPrice: e.target.value })}
                                 />
                               </div>
                               <div>
-                                <Label htmlFor="maxTicketPrice">
-                                  Max Ticket Price ($)
-                                </Label>
+                                <Label htmlFor="maxTicketPrice">Max Ticket Price ($)</Label>
                                 <Input
                                   id="maxTicketPrice"
                                   type="number"
                                   placeholder="1000"
                                   value={filters.maxTicketPrice}
-                                  onChange={(e) =>
-                                    setFilters({
-                                      ...filters,
-                                      maxTicketPrice:
-                                        e.target.value,
-                                    })
-                                  }
+                                  onChange={(e) => setFilters({ ...filters, maxTicketPrice: e.target.value })}
                                 />
                               </div>
                             </div>
@@ -769,28 +551,24 @@ WHERE e.type = '${category}'`;
                   </Tabs>
 
                   <div className="pt-4 space-y-2">
-                    <Button
-                      onClick={handleSearch}
-                      className="w-full"
-                    >
+                    <Button onClick={handleSearch} className="w-full" disabled={isLoading}>
                       <Search className="size-4 mr-2" />
-                      Execute Query
+                      {isLoading ? "Loading..." : "Execute Query"}
                     </Button>
-                    <Button
-                      onClick={handleReset}
-                      variant="outline"
-                      className="w-full"
-                    >
+                    <Button onClick={handleReset} variant="outline" className="w-full">
                       Reset Filters
                     </Button>
                   </div>
+
+                  {error && (
+                    <p className="text-sm text-red-500 mt-2">{error}</p>
+                  )}
                 </CardContent>
               </Card>
             </div>
 
-            {/* Results and SQL Query */}
+            {/* Results and SQL */}
             <div className="lg:col-span-2 space-y-6">
-              {/* Generated SQL Query */}
               {generatedSQL && (
                 <Card>
                   <CardHeader>
@@ -810,7 +588,6 @@ WHERE e.type = '${category}'`;
                 </Card>
               )}
 
-              {/* Results */}
               <Card>
                 <CardHeader>
                   <CardTitle>Query Results</CardTitle>
@@ -824,74 +601,40 @@ WHERE e.type = '${category}'`;
                   {!hasSearched ? (
                     <div className="text-center py-12 text-muted-foreground">
                       <Database className="size-12 mx-auto mb-4 opacity-50" />
-                      <p>
-                        Configure your filters and click
-                        "Execute Query" to search for events
-                      </p>
+                      <p>Configure your filters and click "Execute Query" to search for events</p>
                     </div>
                   ) : results.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground">
                       <Search className="size-12 mx-auto mb-4 opacity-50" />
-                      <p>
-                        No events found matching your criteria
-                      </p>
-                      <p className="text-sm mt-2">
-                        Try adjusting your filters
-                      </p>
+                      <p>No events found matching your criteria</p>
+                      <p className="text-sm mt-2">Try adjusting your filters</p>
                     </div>
                   ) : (
                     <div className="space-y-4">
                       {results.map((event) => {
-                        const ticketStats = getTicketStats(
-                          event.event_id,
-                        );
-                        const occupancyRate = (
-                          (ticketStats.sold /
-                            ticketStats.total) *
-                          100
-                        ).toFixed(1);
+                        const occupancyRate = event.total_tickets > 0
+                          ? ((event.tickets_sold / event.total_tickets) * 100).toFixed(1)
+                          : "0.0";
 
                         return (
                           <Card key={event.event_id}>
                             <CardHeader>
                               <div className="flex items-start justify-between">
                                 <div className="flex-1">
-                                  <CardTitle>
-                                    {event.name}
-                                  </CardTitle>
-                                  <CardDescription>
-                                    {event.venue?.name}
-                                  </CardDescription>
+                                  <CardTitle>{event.name}</CardTitle>
+                                  <CardDescription>{event.venue_name}</CardDescription>
                                 </div>
                                 <div className="flex gap-2 flex-wrap justify-end">
-                                  <Badge
-                                    variant={
-                                      event.status ===
-                                      "scheduled"
-                                        ? "default"
-                                        : "secondary"
-                                    }
-                                  >
+                                  <Badge variant={event.status === "scheduled" ? "default" : "secondary"}>
                                     {event.status}
                                   </Badge>
-                                  {isOrganizer &&
-                                    event.venue && (
-                                      <Badge variant="outline">
-                                        $
-                                        {event.venue.base_rental_rate.toLocaleString()}{" "}
-                                        rental
-                                      </Badge>
-                                    )}
+                                  {isOrganizer && (
+                                    <Badge variant="outline">
+                                      ${Number(event.base_rental_rate).toLocaleString()} rental
+                                    </Badge>
+                                  )}
                                   {isResearcher && (
-                                    <Badge
-                                      variant={
-                                        parseFloat(
-                                          occupancyRate,
-                                        ) > 70
-                                          ? "default"
-                                          : "secondary"
-                                      }
-                                    >
+                                    <Badge variant={parseFloat(occupancyRate) > 70 ? "default" : "secondary"}>
                                       {occupancyRate}% sold
                                     </Badge>
                                   )}
@@ -900,149 +643,68 @@ WHERE e.type = '${category}'`;
                             </CardHeader>
                             <CardContent>
                               <div className="space-y-3">
-                                <p className="text-sm">
-                                  {event.description}
-                                </p>
+                                <p className="text-sm">{event.description}</p>
                                 <Separator />
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                                   <div>
-                                    <span className="text-muted-foreground">
-                                      Date:
-                                    </span>
-                                    <p>
-                                      {new Date(
-                                        event.date,
-                                      ).toLocaleDateString(
-                                        "en-US",
-                                        {
-                                          year: "numeric",
-                                          month: "long",
-                                          day: "numeric",
-                                        },
-                                      )}
-                                    </p>
+                                    <span className="text-muted-foreground">Date:</span>
+                                    <p>{new Date(event.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</p>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Time:</span>
+                                    <p>{event.start_time?.slice(0, 5)} - {event.end_time?.slice(0, 5)}</p>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Location:</span>
+                                    <p>{event.city}, {event.state}</p>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Capacity:</span>
+                                    <p>{Number(event.capacity).toLocaleString()}</p>
                                   </div>
                                   <div>
                                     <span className="text-muted-foreground">
-                                      Time:
-                                    </span>
-                                    <p>
-                                      {event.start_time.slice(
-                                        0,
-                                        5,
-                                      )}{" "}
-                                      -{" "}
-                                      {event.end_time.slice(
-                                        0,
-                                        5,
-                                      )}
-                                    </p>
-                                  </div>
-                                  <div>
-                                    <span className="text-muted-foreground">
-                                      Location:
-                                    </span>
-                                    <p>
-                                      {event.venue?.city},{" "}
-                                      {event.venue?.state}
-                                    </p>
-                                  </div>
-                                  <div>
-                                    <span className="text-muted-foreground">
-                                      Capacity:
-                                    </span>
-                                    <p>
-                                      {event.capacity.toLocaleString()}
-                                    </p>
-                                  </div>
-                                  <div>
-                                    <span className="text-muted-foreground">
-                                      {isOrganizer
-                                        ? "Venue Type:"
-                                        : "Tickets Available:"}
+                                      {isOrganizer ? "Venue Type:" : "Tickets Available:"}
                                     </span>
                                     <p>
                                       {isOrganizer
-                                        ? event.venue
-                                            ?.venue_type
-                                        : `${ticketStats.available.toLocaleString()} tickets`}
+                                        ? event.venue_type
+                                        : `${Number(event.tickets_available).toLocaleString()} tickets`}
                                     </p>
                                   </div>
                                   <div>
-                                    <span className="text-muted-foreground">
-                                      Rating:
-                                    </span>
-                                    <p>
-                                      ⭐{" "}
-                                      {event.rating.toFixed(1)}
-                                    </p>
+                                    <span className="text-muted-foreground">Rating:</span>
+                                    <p>⭐ {event.rating ? Number(event.rating).toFixed(1) : "N/A"}</p>
                                   </div>
-                                  {isOrganizer &&
-                                    event.venue && (
-                                      <>
-                                        <div>
-                                          <span className="text-muted-foreground">
-                                            Venue Rating:
-                                          </span>
-                                          <p>
-                                            ⭐{" "}
-                                            {event.venue.rating.toFixed(
-                                              1,
-                                            )}
-                                          </p>
-                                        </div>
-                                        <div>
-                                          <span className="text-muted-foreground">
-                                            Contact:
-                                          </span>
-                                          <p>
-                                            {
-                                              event.venue
-                                                .contact_name
-                                            }
-                                          </p>
-                                        </div>
-                                        <div>
-                                          <span className="text-muted-foreground">
-                                            Phone:
-                                          </span>
-                                          <p>
-                                            {
-                                              event.venue
-                                                .contact_phone
-                                            }
-                                          </p>
-                                        </div>
-                                      </>
-                                    )}
+                                  {isOrganizer && (
+                                    <>
+                                      <div>
+                                        <span className="text-muted-foreground">Venue Rating:</span>
+                                        <p>⭐ {event.venue_rating ? Number(event.venue_rating).toFixed(1) : "N/A"}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-muted-foreground">Contact:</span>
+                                        <p>{event.contact_name}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-muted-foreground">Phone:</span>
+                                        <p>{event.contact_phone}</p>
+                                      </div>
+                                    </>
+                                  )}
                                   {isResearcher && (
                                     <>
                                       <div>
-                                        <span className="text-muted-foreground">
-                                          Tickets Sold:
-                                        </span>
-                                        <p>
-                                          {ticketStats.sold.toLocaleString()}
-                                        </p>
+                                        <span className="text-muted-foreground">Tickets Sold:</span>
+                                        <p>{Number(event.tickets_sold).toLocaleString()}</p>
                                       </div>
                                       <div>
-                                        <span className="text-muted-foreground">
-                                          Reserved:
-                                        </span>
-                                        <p>
-                                          {ticketStats.reserved.toLocaleString()}
-                                        </p>
+                                        <span className="text-muted-foreground">Reserved:</span>
+                                        <p>{Number(event.tickets_reserved).toLocaleString()}</p>
                                       </div>
                                       <div>
-                                        <span className="text-muted-foreground">
-                                          Venue Type:
-                                        </span>
-                                        <p>
-                                          {
-                                            event.venue
-                                              ?.venue_type
-                                          }
-                                        </p>
+                                        <span className="text-muted-foreground">Venue Type:</span>
+                                        <p>{event.venue_type}</p>
                                       </div>
                                     </>
                                   )}
