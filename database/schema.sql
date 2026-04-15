@@ -1,5 +1,6 @@
 -- PostgreSQL Database Setup Script for Event Management System
 -- Note: Create the database first, then connect to it before running this script
+CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 -- Drop tables in reverse order of dependencies
 DROP TABLE IF EXISTS preferences CASCADE;
@@ -12,6 +13,20 @@ DROP TABLE IF EXISTS transactions CASCADE;
 DROP TABLE IF EXISTS customers CASCADE;
 DROP TABLE IF EXISTS events CASCADE;
 DROP TABLE IF EXISTS venues CASCADE;
+
+-- Drop custom types if they exist
+DROP TYPE IF EXISTS event_status CASCADE;
+DROP TYPE IF EXISTS ticket_status CASCADE;
+DROP TYPE IF EXISTS booking_status CASCADE;
+DROP TYPE IF EXISTS availability_status CASCADE;
+DROP TYPE IF EXISTS user_type CASCADE;
+
+/* Define ENUMs for fixed status types */
+CREATE TYPE event_status AS ENUM ('scheduled', 'complete', 'postponed', 'cancelled');
+CREATE TYPE ticket_status AS ENUM ('sold', 'available', 'reserved');
+CREATE TYPE booking_status AS ENUM ('pending', 'confirmed', 'cancelled');
+CREATE TYPE availability_status AS ENUM('available', 'hold', 'booked', 'maintenance');
+CREATE TYPE user_type AS ENUM ('customer', 'booker', 'both');
 
 /* Create venues table */
 CREATE TABLE venues (
@@ -28,14 +43,14 @@ CREATE TABLE venues (
 	contact_name VARCHAR(255) NOT NULL,
 	contact_phone VARCHAR(20) NOT NULL,
 	contact_email VARCHAR(255) NOT NULL,
-	rating DECIMAL(3, 2),
+	rating DECIMAL(3, 2) CHECK (rating >= 0 AND rating <= 5)
 );
 
 /* Create customers table*/
 CREATE TABLE customers (
 	customer_id SERIAL PRIMARY KEY,
 	name VARCHAR(255) NOT NULL,
-	type VARCHAR(50) NOT NULL CHECK (type IN ('customer', 'booker', 'both')),
+	type user_type NOT NULL DEFAULT 'customer',
 	age INT,
 	race VARCHAR(100),
 	gender VARCHAR(50),
@@ -43,7 +58,7 @@ CREATE TABLE customers (
 	affiliated_organization VARCHAR(255),
 	contact_phone VARCHAR(20) NOT NULL,
 	contact_email VARCHAR(255) NOT NULL,
-	rating DECIMAL(3, 2),
+	rating DECIMAL(3, 2) CHECK (rating >= 0 AND rating <= 5)
 );
 
 /* Create events table (depends on venues) */
@@ -51,15 +66,14 @@ CREATE TABLE events (
 	event_id SERIAL PRIMARY KEY,
 	name VARCHAR(200) NOT NULL,
 	venue_id INT NOT NULL,
-	date DATE NOT NULL,
-	start_time TIME NOT NULL,
-	end_time TIME NOT NULL,
+	event_time_range TSRANGE NOT NULL,
 	capacity INT NOT NULL,
 	type VARCHAR(100) NOT NULL,
-	status VARCHAR(20) NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'complete', 'postponed', 'cancelled')),
+	status event_status NOT NULL DEFAULT 'scheduled',
 	description TEXT,
-	rating DECIMAL(3, 2),
-	FOREIGN KEY (venue_id) REFERENCES venues(venue_id)
+	rating DECIMAL(3, 2) CHECK (rating >= 0 AND rating <= 5),
+	FOREIGN KEY (venue_id) REFERENCES venues(venue_id),
+	CONSTRAINT capacity_positive CHECK (capacity >0)
 );
 
 /* Create transactions table */
@@ -77,10 +91,14 @@ CREATE TABLE tickets (
 	ticket_id SERIAL PRIMARY KEY,
 	event_id INT NOT NULL,
 	type VARCHAR(100) NOT NULL,
-	status VARCHAR(50) NOT NULL DEFAULT 'available' CHECK (status IN ('sold', 'available', 'reserved')),
-	seat_location VARCHAR(100),
+	status ticket_status NOT NULL DEFAULT 'available',
+	seat_location VARCHAR(100) NOT NULL DEFAULT 'GA',
 	face_value_price DECIMAL(10, 2) NOT NULL,
-	FOREIGN KEY (event_id) REFERENCES events(event_id)
+	FOREIGN KEY (event_id) REFERENCES events(event_id),
+	EXCLUDE USING gist(
+		event_id WITH =,
+		seat_location WITH =
+	) WHERE (status = 'sold' AND seat_location <> 'GA')
 );
 
 /* Create transaction_tickets table */
@@ -100,7 +118,7 @@ CREATE TABLE venue_bookings (
 	venue_id INT NOT NULL,
 	customer_id INT NOT NULL,
 	transaction_id INT NOT NULL,
-	status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled')),
+	status booking_status NOT NULL DEFAULT 'pending',
 	negotiated_price DECIMAL(10, 2) NOT NULL,
 	FOREIGN KEY (event_id) REFERENCES events(event_id),
 	FOREIGN KEY (venue_id) REFERENCES venues(venue_id),
@@ -125,11 +143,15 @@ CREATE TABLE payments (
 CREATE TABLE venue_availability (
 	venue_id INT NOT NULL,
 	event_id INT,
-	date_time TIMESTAMP NOT NULL,
-	status VARCHAR(50) NOT NULL CHECK (status IN ('available', 'hold', 'booked', 'maintenance')),
-	PRIMARY KEY (venue_id, date_time),
+	booking_time_range TSRANGE NOT NULL,
+	status availability_status NOT NULL DEFAULT 'available',
+	PRIMARY KEY (venue_id, booking_time_range),
 	FOREIGN KEY (venue_id) REFERENCES venues(venue_id),
-	FOREIGN KEY (event_id) REFERENCES events(event_id)
+	FOREIGN KEY (event_id) REFERENCES events(event_id),
+	EXCLUDE USING gist(
+		venue_id WITH =,
+		booking_time_range WITH &&
+	)
 );
 
 /* Create preferences table */
