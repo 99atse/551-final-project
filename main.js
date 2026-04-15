@@ -31,22 +31,19 @@ app.get('/api/events', async (req, res) => {
     let query = `
       SELECT
         e.*,
-        v.name        AS venue_name,
+        v.name AS venue_name,
         v.city, v.state,
         v.venue_type, v.base_rental_rate,
         v.contact_name, v.contact_phone,
-        v.rating      AS venue_rating,
+        v.rating AS venue_rating,
         COUNT(t.ticket_id) AS total_tickets,
-        SUM(CASE WHEN t.status = 'sold'      THEN 1 ELSE 0 END) AS tickets_sold,
-        SUM(CASE WHEN t.status = 'available' THEN 1 ELSE 0 END) AS tickets_available,
-        SUM(CASE WHEN t.status = 'reserved'  THEN 1 ELSE 0 END) AS tickets_reserved,
         MIN(t.face_value_price) AS min_ticket_price,
         MAX(t.face_value_price) AS max_ticket_price
       FROM events e
       JOIN venues v ON e.venue_id = v.venue_id
       LEFT JOIN tickets t ON e.event_id = t.event_id
-      WHERE true
-    `
+      WHERE e.date >= CURRENT_DATE
+      `
 
     if (type)   { params.push(type);   query += ` AND e.type = $${params.length}` }
     if (status) { params.push(status); query += ` AND e.status = $${params.length}` }
@@ -83,6 +80,8 @@ app.get('/api/events', async (req, res) => {
 
     const { rows } = await pool.query(query, params)
     res.json(rows)
+    console.log("QUERY:", query)
+    console.log("PARAMS:", params)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
