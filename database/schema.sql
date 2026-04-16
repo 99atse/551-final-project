@@ -70,6 +70,7 @@ CREATE TABLE events (
 	capacity INT NOT NULL,
 	type VARCHAR(100) NOT NULL,
 	status event_status NOT NULL DEFAULT 'scheduled',
+	is_sold_out BOOLEAN NOT NULL DEFAULT FALSE,
 	description TEXT,
 	rating DECIMAL(3, 2) CHECK (rating >= 0 AND rating <= 5),
 	FOREIGN KEY (venue_id) REFERENCES venues(venue_id),
@@ -94,7 +95,12 @@ CREATE TABLE tickets (
 	status ticket_status NOT NULL DEFAULT 'available',
 	seat_location VARCHAR(100) NOT NULL DEFAULT 'GA',
 	face_value_price DECIMAL(10, 2) NOT NULL,
+	quantity INT NOT NULL DEFAULT 1,
+	quantity_sold INT NOT NULL DEFAULT 0,
 	FOREIGN KEY (event_id) REFERENCES events(event_id),
+	CONSTRAINT quantity_positive CHECK (quantity > 0),
+	CONSTRAINT quantity_sold_not_negative CHECK (quantity_sold >= 0),
+	CONSTRAINT ga_no_oversell CHECK (quantity_sold <= quantity),
 	EXCLUDE USING gist(
 		event_id WITH =,
 		seat_location WITH =
@@ -162,3 +168,104 @@ CREATE TABLE preferences (
 	value TEXT NOT NULL,
 	FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
+
+/* ---------------------------------------------------------------
+   TRIGGERS: GA availability, capacity enforcement, sold-out status
+   All tables are defined above before any trigger logic.
+   --------------------------------------------------------------- */
+ 
+/* 1. Prevent event capacity from being exceeded.
+      Uses (total - OLD.quantity_sold) + NEW.quantity_sold to compute
+      the correct post-update total, since BEFORE triggers read
+      pre-update values from the table. On INSERT, OLD is null so
+      we coalesce OLD.quantity_sold to 0. */
+CREATE OR REPLACE FUNCTION check_event_capacity()
+RETURNS TRIGGER AS $$
+DECLARE
+    total_sold     INT;
+    event_cap      INT;
+    old_qty_sold   INT;
+    new_total      INT;
+BEGIN
+    -- For INSERT, OLD does not exist so treat as 0
+    old_qty_sold := COALESCE(OLD.quantity_sold, 0);
+ 
+    -- Sum of quantity_sold across all existing rows for this event
+    SELECT COALESCE(SUM(quantity_sold), 0)
+    INTO total_sold
+    FROM tickets
+    WHERE event_id = NEW.event_id;
+ 
+    -- Subtract the old value of this row and add the incoming new value
+    -- to get the true post-update total
+    new_total := (total_sold - old_qty_sold) + NEW.quantity_sold;
+ 
+    SELECT capacity INTO event_cap
+    FROM events
+    WHERE event_id = NEW.event_id;
+ 
+    IF new_total > event_cap THEN
+        RAISE EXCEPTION 'Event capacity of % exceeded (% would be sold)',
+            event_cap, new_total;
+    END IF;
+ 
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+ 
+CREATE TRIGGER enforce_event_capacity
+BEFORE INSERT OR UPDATE ON tickets
+FOR EACH ROW EXECUTE FUNCTION check_event_capacity();
+ 
+/* 2. Auto-sync GA ticket status based on quantity_sold.
+      For reserved seating (quantity = 1), status is managed manually.
+      For GA pools (quantity > 1), status is fully derived here. */
+CREATE OR REPLACE FUNCTION sync_ga_ticket_status()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.seat_location = 'GA' THEN
+        IF NEW.quantity_sold >= NEW.quantity THEN
+            NEW.status := 'sold';
+        ELSIF NEW.quantity_sold > 0 THEN
+            NEW.status := 'reserved';
+        ELSE
+            NEW.status := 'available';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+ 
+CREATE TRIGGER sync_ga_ticket_status
+BEFORE UPDATE ON tickets
+FOR EACH ROW
+WHEN (NEW.seat_location = 'GA')
+EXECUTE FUNCTION sync_ga_ticket_status();
+ 
+/* 3. Auto-flip is_sold_out on events when capacity is reached.
+      Kept separate from event status (scheduled/cancelled/etc)
+      so both can be true simultaneously without conflict. */
+CREATE OR REPLACE FUNCTION update_event_sold_out()
+RETURNS TRIGGER AS $$
+DECLARE
+    total_sold INT;
+    event_cap  INT;
+BEGIN
+    SELECT COALESCE(SUM(quantity_sold), 0), e.capacity
+    INTO total_sold, event_cap
+    FROM tickets t
+    JOIN events e ON e.event_id = t.event_id
+    WHERE t.event_id = NEW.event_id
+    GROUP BY e.capacity;
+ 
+    UPDATE events
+    SET is_sold_out = (total_sold >= event_cap)
+    WHERE event_id = NEW.event_id;
+ 
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+ 
+CREATE TRIGGER check_event_sold_out
+AFTER INSERT OR UPDATE ON tickets
+FOR EACH ROW EXECUTE FUNCTION update_event_sold_out();
