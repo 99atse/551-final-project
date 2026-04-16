@@ -164,20 +164,25 @@ export function EventQuery() {
 
   const generateSQLQuery = (params: URLSearchParams) => {
     let sql = `SELECT e.*, v.name as venue_name, v.city, v.state,
-       v.venue_type, v.base_rental_rate, v.contact_name,
-       v.contact_phone, v.rating as venue_rating,
-       COUNT(t.ticket_id) as total_tickets,
-       SUM(CASE WHEN t.status = 'sold' THEN 1 ELSE 0 END) as tickets_sold,
-       SUM(CASE WHEN t.status = 'available' THEN 1 ELSE 0 END) as tickets_available
-FROM events e
-JOIN venues v ON e.venue_id = v.venue_id
-LEFT JOIN tickets t ON e.event_id = t.event_id
-WHERE e.type = '${params.get("type")}'`;
+        v.venue_type, v.base_rental_rate, v.contact_name,
+        v.contact_phone, v.rating as venue_rating,
+        COUNT(t.ticket_id) as total_tickets,
+        SUM(CASE WHEN t.status = 'sold' THEN 1 ELSE 0 END) as tickets_sold,
+        SUM(CASE WHEN t.status = 'available' THEN 1 ELSE 0 END) as tickets_available
+        FROM events e
+        JOIN venues v ON e.venue_id = v.venue_id
+        LEFT JOIN tickets t ON e.event_id = t.event_id
+        WHERE e.type = '${params.get("type")}'`;
 
     if (params.get("status"))     sql += `\n  AND e.status = '${params.get("status")}'`;
     if (params.get("search"))     sql += `\n  AND (e.name ILIKE '%${params.get("search")}%' OR v.name ILIKE '%${params.get("search")}%')`;
-    if (params.get("dateFrom"))   sql += `\n  AND e.date >= '${params.get("dateFrom")}'`;
-    if (params.get("dateTo"))     sql += `\n  AND e.date <= '${params.get("dateTo")}'`;
+    if (params.get("dateFrom")) {
+      sql += `\n  AND lower(e.event_time_range)::date >= '${params.get("dateFrom")}'`;
+    }
+
+    if (params.get("dateTo")) {
+      sql += `\n  AND lower(e.event_time_range)::date <= '${params.get("dateTo")}'`;
+    }
     if (params.get("city"))       sql += `\n  AND v.city ILIKE '%${params.get("city")}%'`;
     if (params.get("state"))      sql += `\n  AND v.state = '${params.get("state")}'`;
     if (params.get("venueType"))  sql += `\n  AND v.venue_type ILIKE '%${params.get("venueType")}%'`;
@@ -193,7 +198,7 @@ WHERE e.type = '${params.get("type")}'`;
     if (params.get("minTicketPrice")) sql += `\nHAVING MIN(t.face_value_price) >= ${params.get("minTicketPrice")}`;
     if (params.get("maxTicketPrice")) sql += `\n  AND MAX(t.face_value_price) <= ${params.get("maxTicketPrice")}`;
 
-    sql += `\nORDER BY e.date ASC;`;
+    sql += `\nORDER BY lower(e.event_time_range) ASC;`;
     setGeneratedSQL(sql);
   };
 

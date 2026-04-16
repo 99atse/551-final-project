@@ -216,7 +216,7 @@ export function BookingForm() {
         total_amount: totalPrice,
       };
       
-      const response = await fetch('/api/bookings', {
+      const response = await fetch('/api/bookings/ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bookingPayload),
