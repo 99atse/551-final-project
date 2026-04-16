@@ -4,6 +4,7 @@ import { ArrowLeft, Search, Database } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { VenueAvailabilityButton } from "./venue_availability_button";
 import {
   Card,
   CardContent,
@@ -708,6 +709,39 @@ WHERE e.type = '${params.get("type")}'`;
                                       </div>
                                     </>
                                   )}
+                                  {/* Conditional booking button based on user type and availability */}
+                                  {isAttendee && event.status === 'scheduled' && event.tickets_available > 0 && (
+                                    <>
+                                      <Separator />
+                                      <div className="flex items-center justify-between">
+                                        <div className="text-sm text-muted-foreground">
+                                          <span className="font-medium text-foreground">{Number(event.tickets_available).toLocaleString()}</span> tickets available
+                                        </div>
+                                        <Button asChild>
+                                          <Link to={`/${userType}/category/${category}/book/${event.event_id}`}>
+                                            Book Tickets
+                                          </Link>
+                                        </Button>
+                                      </div>
+                                    </>
+                                  )}
+                                  
+                                  {isAttendee && event.status === 'scheduled' && event.tickets_available === 0 && (
+                                    <>
+                                      <Separator />
+                                      <div className="text-sm text-muted-foreground text-center py-2 bg-muted rounded">
+                                        Sold Out - No tickets available
+                                      </div>
+                                    </>
+                                  )}
+                                  
+                                  {isOrganizer && event.status === 'scheduled' && (
+                                    <>
+                                      <Separator />
+                                      <VenueAvailabilityButton eventId={event.event_id} venueId={event.venue_id} userType={userType} />
+                                    </>
+                                  )}
+ 
                                 </div>
                               </div>
                             </CardContent>

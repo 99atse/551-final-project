@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, CreditCard, User, Mail, Phone, MapPin, Calendar, Clock } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -38,9 +38,9 @@ interface Ticket {
   type: string;
   face_value_price: number;
   status: string;
-  section?: string;
-  row?: string;
-  seat_number?: string;
+  // section?: string;
+  // row?: string;
+  // seat_number?: string;
 }
 
 export function BookingForm() {
@@ -105,7 +105,12 @@ export function BookingForm() {
         
         // Fetch available tickets
         const ticketsRes = await fetch(`/api/events/${eventId}/tickets`);
-        if (!ticketsRes.ok) throw new Error('Failed to fetch tickets');
+        // if (!ticketsRes.ok) throw new Error('Failed to fetch tickets');
+        if (!ticketsRes.ok) {
+          const errorText = await ticketsRes.text();
+          console.error("Tickets API error:", errorText);
+          throw new Error(`Failed to fetch tickets: ${ticketsRes.status}`);
+        }
         const ticketsData = await ticketsRes.json();
         setTickets(ticketsData);
         
@@ -243,7 +248,7 @@ export function BookingForm() {
   };
 
   const totalPrice = bookingData.ticketType 
-    ? getTicketPrice(bookingData.ticketType) * parseInt(bookingData.quantity || '1')
+    ? Number(getTicketPrice(bookingData.ticketType)) * parseInt(bookingData.quantity || '1')
     : 0;
 
   if (loading) {
@@ -463,7 +468,7 @@ export function BookingForm() {
                         <SelectContent>
                           {ticketTypes.map(type => (
                             <SelectItem key={type} value={type}>
-                              {type} - ${getTicketPrice(type).toFixed(2)}
+                              {type} - ${Number(getTicketPrice(type)).toFixed(2)}
                             </SelectItem>
                           ))}
                         </SelectContent>
