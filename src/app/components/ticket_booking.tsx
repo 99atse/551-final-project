@@ -36,11 +36,11 @@ interface Ticket {
   ticket_id: number;
   event_id: number;
   type: string;
-  face_value_price: number;
   status: string;
-  // section?: string;
-  // row?: string;
-  // seat_number?: string;
+  seat_location: string;
+  face_value_price: number;
+  quantity: number;
+  quantity_sold: number;
 }
 
 export function BookingForm() {
@@ -58,10 +58,27 @@ export function BookingForm() {
     const ticket = tickets.find(t => t.type === type);
     return ticket?.face_value_price || 0;
   };
+
+  const formatPhoneNumber = (value: string) => {
+    const cleaned = value.replace(/\D/g, '').slice(0, 10);
+
+    const match = cleaned.match(/^(\d{0,3})(\d{0,3})(\d{0,4})$/);
+    if (!match) return value;
+
+    const [, area, prefix, line] = match;
+
+    if (line) return `(${area}) ${prefix}-${line}`;
+    if (prefix) return `(${area}) ${prefix}`;
+    if (area) return `(${area}`;
+
+    return '';
+  };
   
   const getAvailableTicketCount = () => {
-    return tickets.length;
-  };
+  return tickets.reduce((total, ticket) => {
+    return total + (ticket.quantity - ticket.quantity_sold);
+  }, 0);
+};
 
   const [bookingData, setBookingData] = useState({
     // Customer information
@@ -81,6 +98,7 @@ export function BookingForm() {
     quantity: '1',
     
     // Payment information
+    paymentType: '',
     cardNumber: '',
     cardName: '',
     expiryMonth: '',
@@ -126,6 +144,12 @@ export function BookingForm() {
     }
   }, [eventId]);
 
+  const getAvailableByType = (type: string) => {
+        return tickets
+          .filter(t => t.type === type)
+          .reduce((sum, t) => sum + (t.quantity - t.quantity_sold), 0);
+      };
+      
   const validateForm = () => {
     const newErrors: { [key: string]: string } = {};
 
@@ -155,6 +179,9 @@ export function BookingForm() {
     }
 
     // Payment validation
+    if (!bookingData.paymentType) {
+      newErrors.paymentType = 'Please select a payment method';
+    }
     if (!bookingData.cardNumber.trim()) {
       newErrors.cardNumber = 'Card number is required';
     } else if (!/^\d{16}$/.test(bookingData.cardNumber.replace(/\s/g, ''))) {
@@ -184,35 +211,45 @@ export function BookingForm() {
     try {
       const quantity = parseInt(bookingData.quantity);
       
-      // Get specific tickets of the selected type
-      const selectedTickets = tickets
-        .filter(t => t.type === bookingData.ticketType)
-        .slice(0, quantity)
-        .map(t => t.ticket_id);
-      
-      if (selectedTickets.length < quantity) {
-        throw new Error('Not enough tickets available');
+      const ticketTypeData = tickets.find(
+        t => t.type === bookingData.ticketType
+      );
+
+      if (!ticketTypeData) {
+        throw new Error("Invalid ticket type selected");
+      }
+
+      const available =
+        ticketTypeData.quantity - ticketTypeData.quantity_sold;
+
+        if (quantity > available) {
+        throw new Error("Not enough tickets available");
+      }
+
+      if (!bookingData.paymentType) {
+        throw new Error("Payment method is required");
       }
       
       const bookingPayload = {
         event_id: parseInt(eventId || '0'),
-        customer: {
-          first_name: bookingData.firstName,
-          last_name: bookingData.lastName,
-          email: bookingData.email,
-          phone: bookingData.phone,
-        },
-        billing_address: {
-          street: bookingData.address,
-          city: bookingData.city,
-          state: bookingData.state,
-          zipcode: bookingData.zipcode,
-        },
-        ticket_ids: selectedTickets,
-        payment_info: {
-          card_number_last_4: bookingData.cardNumber.slice(-4),
-          cardholder_name: bookingData.cardName,
-        },
+
+        selected_ticket_id: tickets.find(
+          t => t.type === bookingData.ticketType
+        )?.ticket_id,
+
+        name: `${bookingData.firstName} ${bookingData.lastName}`,
+        contact_email: bookingData.email,
+        contact_phone: bookingData.phone,
+
+        address: `${bookingData.address}, ${bookingData.city}, ${bookingData.state} ${bookingData.zipcode}`,
+
+        ticket_type: bookingData.ticketType,
+        quantity: quantity,
+
+        payment_type: bookingData.paymentType,
+        card_number_last_4: bookingData.cardNumber.slice(-4),
+        cardholder_name: bookingData.cardName,
+
         total_amount: totalPrice,
       };
       
@@ -379,7 +416,10 @@ export function BookingForm() {
                           type="tel"
                           className={`pl-10 ${formErrors.phone ? 'border-destructive' : ''}`}
                           value={bookingData.phone}
-                          onChange={(e) => setBookingData({ ...bookingData, phone: e.target.value })}
+                          onChange={(e) => {
+                            const formatted = formatPhoneNumber(e.target.value);
+                            setBookingData({ ...bookingData, phone: formatted });
+                          }}
                           placeholder="(555) 123-4567"
                         />
                       </div>
@@ -468,7 +508,13 @@ export function BookingForm() {
                         <SelectContent>
                           {ticketTypes.map(type => (
                             <SelectItem key={type} value={type}>
-                              {type} - ${Number(getTicketPrice(type)).toFixed(2)}
+                              <div className="flex items-center justify-between w-full gap-4">
+                                <span>{type} - ${Number(getTicketPrice(type)).toFixed(2)}</span>
+
+                                <span className="text-xs text-muted-foreground">
+                                  {getAvailableByType(type)} left
+                                </span>
+                              </div>
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -502,6 +548,23 @@ export function BookingForm() {
                       <CreditCard className="size-5" />
                       Payment Information
                     </CardTitle>
+                    <Label>Payment Method</Label>
+                      <Select
+                        value={bookingData.paymentType}
+                        onValueChange={(value) =>
+                          setBookingData(prev => ({ ...prev, paymentType: value }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select payment method" />
+                        </SelectTrigger>
+
+                        <SelectContent>
+                          <SelectItem value="credit_card">Credit Card</SelectItem>
+                          <SelectItem value="debit_card">Debit Card</SelectItem>
+                          <SelectItem value="apple_pay">Apple Pay</SelectItem>
+                        </SelectContent>
+                      </Select>
                     <CardDescription>
                       Enter your payment details
                     </CardDescription>

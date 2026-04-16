@@ -3,7 +3,7 @@ import { UserTypeSelection } from './components/user_type_selection';
 import { Home } from './components/home';
 import { EventQuery } from './components/event_query';
 import { NotFound } from './components/not_found';
-import { BookingForm } from './components/booking_form'; 
+import { BookingForm } from './components/ticket_booking'; 
 
 export const router = createBrowserRouter([
   {

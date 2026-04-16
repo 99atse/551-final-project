@@ -228,14 +228,17 @@ app.get('/api/venues/:venueId/availability', async (req, res) => {
 // POST ticket booking (attendee)
 // Uses FOR UPDATE row locking — demonstrates PostgreSQL MVCC preventing
 // two users from purchasing the last ticket simultaneously
+
 app.post('/api/bookings/ticket', async (req, res) => {
   const client = await pool.connect()
   try {
     const {
-      event_id, selected_ticket_id,
+      event_id, selected_ticket_id, quantity,
       name, contact_email, contact_phone, address, age, gender,
-      payment_type, card_last_4, billing_address
+      payment_type, card_number_last_4, total_amount
     } = req.body
+
+    const qty = parseInt(quantity) || 1
 
     if (!event_id || !selected_ticket_id || !name || !contact_email || !contact_phone) {
       return res.status(400).json({ error: 'Missing required fields' })
@@ -243,24 +246,30 @@ app.post('/api/bookings/ticket', async (req, res) => {
 
     await client.query('BEGIN')
 
-    // 1. Lock ticket row and check availability
+    // 1. Lock ticket row and check enough quantity is available
     const ticketCheck = await client.query(
       `SELECT ticket_id, status, face_value_price, quantity, quantity_sold
        FROM tickets WHERE ticket_id = $1 FOR UPDATE`,
       [selected_ticket_id]
     )
+
     if (!ticketCheck.rows.length) {
       await client.query('ROLLBACK')
       return res.status(404).json({ error: 'Ticket not found' })
     }
 
     const ticket = ticketCheck.rows[0]
-    if (ticket.quantity_sold >= ticket.quantity) {
+    const available = ticket.quantity - ticket.quantity_sold
+
+    if (available < qty) {
       await client.query('ROLLBACK')
-      return res.status(400).json({ error: 'Ticket is no longer available' })
+      return res.status(400).json({
+        error: `Only ${available} ticket(s) available, but ${qty} requested`
+      })
     }
 
     const ticketPrice = ticket.face_value_price
+    const finalTotal = total_amount || (Number(ticketPrice) * qty)
 
     // 2. Look up existing customer or create new
     let customerId
@@ -299,27 +308,30 @@ app.post('/api/bookings/ticket', async (req, res) => {
     await client.query(
       `INSERT INTO transaction_tickets (transaction_id, ticket_id, price_paid)
        VALUES ($1, $2, $3)`,
-      [transactionId, selected_ticket_id, ticketPrice]
+      [transactionId, selected_ticket_id, finalTotal]
     )
 
-    // 5. Increment quantity_sold (trigger auto-updates status and is_sold_out)
+    // 5. Increment quantity_sold by the requested quantity
+    //    Triggers auto-update status and is_sold_out on the event
     await client.query(
-      `UPDATE tickets SET quantity_sold = quantity_sold + 1 WHERE ticket_id = $1`,
-      [selected_ticket_id]
+      `UPDATE tickets SET quantity_sold = quantity_sold + $1 WHERE ticket_id = $2`,
+      [qty, selected_ticket_id]
     )
 
     // 6. Record payment
     await client.query(
       `INSERT INTO payments (transaction_id, payment_type, payment_status, card_last_4, total_amount, billing_address)
        VALUES ($1, $2, 'completed', $3, $4, $5)`,
-      [transactionId, payment_type, card_last_4 || null, ticketPrice, billing_address || null]
+      [transactionId, payment_type, card_number_last_4 || null, finalTotal, address || null]
     )
 
     await client.query('COMMIT')
     res.status(201).json({
       success: true,
+      booking_id: transactionId,
       transaction_id: transactionId,
-      total_amount: ticketPrice,
+      quantity: qty,
+      total_amount: finalTotal,
       message: 'Ticket booked successfully'
     })
   } catch (err) {
