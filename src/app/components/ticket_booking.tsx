@@ -43,7 +43,7 @@ interface Ticket {
   quantity_sold: number;
 }
 
-export function BookingForm() {
+export function BookingTicket() {
   const { eventId, userType, category } = useParams<{ eventId: string; userType: string; category: string }>();
   const navigate = useNavigate();
   

@@ -714,7 +714,6 @@ export function EventQuery() {
                                       </div>
                                     </>
                                   )}
-                                  {/* Conditional booking button based on user type and availability */}
                                   {isAttendee && event.status === 'scheduled' && event.tickets_available > 0 && (
                                     <>
                                       <Separator />
@@ -723,7 +722,7 @@ export function EventQuery() {
                                           <span className="font-medium text-foreground">{Number(event.tickets_available).toLocaleString()}</span> tickets available
                                         </div>
                                         <Button asChild>
-                                          <Link to={`/${userType}/category/${category}/book/${event.event_id}`}>
+                                          <Link to={`/${userType}/category/${category}/book-ticket/${event.event_id}`}>
                                             Book Tickets
                                           </Link>
                                         </Button>
@@ -743,7 +742,12 @@ export function EventQuery() {
                                   {isOrganizer && event.status === 'scheduled' && (
                                     <>
                                       <Separator />
-                                      <VenueAvailabilityButton eventId={event.event_id} venueId={event.venue_id} userType={userType} />
+                                      <VenueAvailabilityButton
+                                        eventId={event.event_id}
+                                        venueId={event.venue_id}
+                                        userType={userType}
+                                        category={category}
+                                      />
                                     </>
                                   )}
  

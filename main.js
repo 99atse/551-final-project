@@ -431,7 +431,14 @@ app.post('/api/bookings/venue', async (req, res) => {
       [event_id, venue_id, customerId, transactionId, finalPrice]
     )
 
-    // 6. Record payment
+    // 6. Block the venue for this time range
+    await client.query(
+      `INSERT INTO venue_availability (venue_id, booking_time_range, status, event_id)
+      VALUES ($1, $2, 'booked', $3)`,
+      [venue_id, event_time_range, event_id]
+    );
+
+    // 7. Record payment
     await client.query(
       `INSERT INTO payments (transaction_id, payment_type, payment_status, card_last_4, total_amount, billing_address)
        VALUES ($1, $2, 'pending', $3, $4, $5)`,
