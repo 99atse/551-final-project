@@ -183,14 +183,6 @@ function ConfirmationModal({
               <>
                 <Button
                   variant="outline"
-                  className="w-full flex items-center gap-2"
-                  onClick={onEdit}
-                >
-                  <Pencil className="size-4" />
-                  Edit Booking
-                </Button>
-                <Button
-                  variant="outline"
                   className="w-full flex items-center gap-2 text-destructive border-destructive hover:bg-destructive/10"
                   onClick={handleCancel}
                   disabled={cancelling}
