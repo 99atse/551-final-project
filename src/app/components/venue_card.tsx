@@ -7,10 +7,10 @@ interface CategoryCardProps {
   description: string;
   icon: LucideIcon;
   path: string;
-  eventCount: number;
+  venueCount: number;
 }
 
-export function CategoryCard({ title, description, icon: Icon, path, eventCount }: CategoryCardProps) {
+export function VenueCard({ title, description, icon: Icon, path, venueCount }: CategoryCardProps) {
   return (
     <Link to={path} className="block transition-transform hover:scale-105">
       <Card className="h-full cursor-pointer hover:shadow-lg">
@@ -25,7 +25,7 @@ export function CategoryCard({ title, description, icon: Icon, path, eventCount 
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            {eventCount} events available
+            {venueCount} venues available
           </p>
         </CardContent>
       </Card>

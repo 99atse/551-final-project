@@ -1,34 +1,35 @@
-import { createBrowserRouter } from 'react-router-dom';
-import { UserTypeSelection } from './components/user_type_selection';
-import { Home } from './components/home';
-import { EventQuery } from './components/event_query';
-import { NotFound } from './components/not_found';
-import { BookingTicket } from './components/ticket_booking'; 
-import { BookingVenue } from './components/venue_booking';
+import { createBrowserRouter } from "react-router-dom";
+import { UserTypeSelection } from "./components/user_type_selection";
+import { Home } from "./components/home";
+import { CategoryRouter } from "./components/category_router";
+import { BookingTicket } from "./components/ticket_booking";
+import { BookingVenue } from "./components/venue_booking";
+import { NotFound } from "./components/not_found";
 
 export const router = createBrowserRouter([
   {
-    path: '/',
+    path: "/",
     Component: UserTypeSelection,
   },
   {
-    path: '/:userType/categories',
+    path: "/:userType/categories",
     Component: Home,
   },
   {
-    path: '/:userType/category/:category',
-    Component: EventQuery,
+    path: "/:userType/category/:category",
+    Component: CategoryRouter,
   },
+
   {
-    path: '/:userType/category/:category/book-ticket/:eventId', 
+    path: "/:userType/category/:category/book-ticket/:eventId",
     Component: BookingTicket,
   },
   {
-    path: '/:userType/category/:category/book-venue/:eventId', 
+    path: "/:userType/category/:category/book-venue/:venueId",
     Component: BookingVenue,
   },
   {
-    path: '*',
+    path: "*",
     Component: NotFound,
   },
 ]);

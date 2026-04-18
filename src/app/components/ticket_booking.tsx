@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, CreditCard, User, Mail, Phone, MapPin, Calendar, Clock } from 'lucide-react';
+import { ArrowLeft, CreditCard, User, Mail, Phone, MapPin, Calendar, Clock, CheckCircle2, X, Pencil, Trash2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -9,7 +9,6 @@ import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
-// Types matching PostgreSQL schema
 interface Event {
   event_id: number;
   name: string;
@@ -43,61 +42,231 @@ interface Ticket {
   quantity_sold: number;
 }
 
+interface BookingResult {
+  transaction_id: number;
+  quantity: number;
+  total_amount: number;
+  ticketType: string;
+  eventName: string;
+}
+
+// ── Confirmation Modal ────────────────────────────────────
+function ConfirmationModal({
+  result,
+  onEdit,
+  onCancel,
+  onClose,
+}: {
+  result: BookingResult;
+  onEdit: () => void;
+  onCancel: () => void;
+  onClose: () => void;
+}) {
+  const WINDOW_SECONDS = 120;
+  const [secondsLeft, setSecondsLeft] = useState(WINDOW_SECONDS);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      setSecondsLeft(s => {
+        if (s <= 1) {
+          clearInterval(intervalRef.current!);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(intervalRef.current!);
+  }, []);
+
+  const minutes = Math.floor(secondsLeft / 60);
+  const seconds = secondsLeft % 60;
+  const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  const withinWindow = secondsLeft > 0;
+  const pct = (secondsLeft / WINDOW_SECONDS) * 100;
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/bookings/ticket/${result.transaction_id}/cancel`, {
+        method: 'PATCH',
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Cancel failed');
+      }
+      setCancelled(true);
+    } catch (err: any) {
+      alert(`Cancel failed: ${err.message}`);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  if (cancelled) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+        <Card className="max-w-md w-full mx-4">
+          <CardHeader className="text-center">
+            <CardTitle className="text-destructive">Booking Cancelled</CardTitle>
+            <CardDescription>
+              Your booking #{result.transaction_id} has been cancelled and your tickets have been released.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full" onClick={onClose}>Close</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+      <Card className="max-w-md w-full mx-4">
+        <CardHeader className="text-center">
+          <CheckCircle2 className="size-12 text-green-500 mx-auto mb-2" />
+          <CardTitle>Booking Confirmed!</CardTitle>
+          <CardDescription>Confirmation #{result.transaction_id}</CardDescription>
+        </CardHeader>
+
+        <CardContent className="space-y-4">
+          {/* Booking summary */}
+          <div className="bg-muted rounded-lg p-4 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Event</span>
+              <span className="font-medium">{result.eventName}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Ticket type</span>
+              <span>{result.ticketType}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Quantity</span>
+              <span>{result.quantity}</span>
+            </div>
+            <Separator />
+            <div className="flex justify-between font-medium">
+              <span>Total paid</span>
+              <span>${Number(result.total_amount).toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Countdown */}
+          {withinWindow ? (
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Edit/cancel window closes in</span>
+                <span className={`font-medium tabular-nums ${secondsLeft <= 30 ? 'text-destructive' : ''}`}>
+                  {timeStr}
+                </span>
+              </div>
+              {/* Progress bar */}
+              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${secondsLeft <= 30 ? 'bg-destructive' : 'bg-green-500'}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center">
+              The edit/cancel window has closed.
+            </p>
+          )}
+
+          {/* Action buttons */}
+          <div className="space-y-2">
+            {withinWindow && (
+              <>
+                <Button
+                  variant="outline"
+                  className="w-full flex items-center gap-2"
+                  onClick={onEdit}
+                >
+                  <Pencil className="size-4" />
+                  Edit Booking
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full flex items-center gap-2 text-destructive border-destructive hover:bg-destructive/10"
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                >
+                  <Trash2 className="size-4" />
+                  {cancelling ? 'Cancelling...' : 'Cancel Booking'}
+                </Button>
+              </>
+            )}
+            <Button className="w-full flex items-center gap-2" onClick={onClose}>
+              <X className="size-4" />
+              Close
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────
 export function BookingTicket() {
   const { eventId, userType, category } = useParams<{ eventId: string; userType: string; category: string }>();
   const navigate = useNavigate();
-  
+
   const [event, setEvent] = useState<Event | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  
-  // Get unique ticket types with their prices
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
+
+  // Confirmation modal state
+  const [bookingResult, setBookingResult] = useState<BookingResult | null>(null);
+
   const ticketTypes = Array.from(new Set(tickets.map(t => t.type)));
+
   const getTicketPrice = (type: string) => {
     const ticket = tickets.find(t => t.type === type);
     return ticket?.face_value_price || 0;
   };
 
+  const getAvailableTicketCount = () =>
+    tickets.reduce((total, t) => total + (t.quantity - t.quantity_sold), 0);
+
+  const getAvailableByType = (type: string) =>
+    tickets.filter(t => t.type === type).reduce((sum, t) => sum + (t.quantity - t.quantity_sold), 0);
+
   const formatPhoneNumber = (value: string) => {
     const cleaned = value.replace(/\D/g, '').slice(0, 10);
-
     const match = cleaned.match(/^(\d{0,3})(\d{0,3})(\d{0,4})$/);
     if (!match) return value;
-
     const [, area, prefix, line] = match;
-
     if (line) return `(${area}) ${prefix}-${line}`;
     if (prefix) return `(${area}) ${prefix}`;
     if (area) return `(${area}`;
-
     return '';
   };
-  
-  const getAvailableTicketCount = () => {
-  return tickets.reduce((total, ticket) => {
-    return total + (ticket.quantity - ticket.quantity_sold);
-  }, 0);
-};
+
+  const formatCardNumber = (value: string) => {
+    const cleaned = value.replace(/\s/g, '');
+    const chunks = cleaned.match(/.{1,4}/g);
+    return chunks ? chunks.join(' ') : cleaned;
+  };
 
   const [bookingData, setBookingData] = useState({
-    // Customer information
     firstName: '',
     lastName: '',
     email: '',
     phone: '',
-    
-    // Billing address
     address: '',
     city: '',
     state: '',
     zipcode: '',
-    
-    // Ticket selection
     ticketType: '',
     quantity: '1',
-    
-    // Payment information
     paymentType: '',
     cardNumber: '',
     cardName: '',
@@ -106,54 +275,28 @@ export function BookingTicket() {
     cvv: '',
   });
 
-  const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Fetch event and tickets on mount
   useEffect(() => {
     const fetchEventData = async () => {
       try {
         setLoading(true);
-        
-        // Fetch event details
         const eventRes = await fetch(`/api/events/${eventId}`);
         if (!eventRes.ok) throw new Error('Event not found');
-        const eventData = await eventRes.json();
-        setEvent(eventData);
-        
-        // Fetch available tickets
+        setEvent(await eventRes.json());
+
         const ticketsRes = await fetch(`/api/events/${eventId}/tickets`);
-        // if (!ticketsRes.ok) throw new Error('Failed to fetch tickets');
-        if (!ticketsRes.ok) {
-          const errorText = await ticketsRes.text();
-          console.error("Tickets API error:", errorText);
-          throw new Error(`Failed to fetch tickets: ${ticketsRes.status}`);
-        }
-        const ticketsData = await ticketsRes.json();
-        setTickets(ticketsData);
-        
+        if (!ticketsRes.ok) throw new Error(`Failed to fetch tickets: ${ticketsRes.status}`);
+        setTickets(await ticketsRes.json());
       } catch (err: any) {
         setError(err.message);
       } finally {
         setLoading(false);
       }
     };
-    
-    if (eventId) {
-      fetchEventData();
-    }
+    if (eventId) fetchEventData();
   }, [eventId]);
 
-  const getAvailableByType = (type: string) => {
-        return tickets
-          .filter(t => t.type === type)
-          .reduce((sum, t) => sum + (t.quantity - t.quantity_sold), 0);
-      };
-      
   const validateForm = () => {
     const newErrors: { [key: string]: string } = {};
-
-    // Customer info validation
     if (!bookingData.firstName.trim()) newErrors.firstName = 'First name is required';
     if (!bookingData.lastName.trim()) newErrors.lastName = 'Last name is required';
     if (!bookingData.email.trim()) {
@@ -162,26 +305,18 @@ export function BookingTicket() {
       newErrors.email = 'Invalid email format';
     }
     if (!bookingData.phone.trim()) newErrors.phone = 'Phone number is required';
-
-    // Address validation
     if (!bookingData.address.trim()) newErrors.address = 'Address is required';
     if (!bookingData.city.trim()) newErrors.city = 'City is required';
     if (!bookingData.state.trim()) newErrors.state = 'State is required';
     if (!bookingData.zipcode.trim()) newErrors.zipcode = 'Zipcode is required';
-
-    // Ticket validation
     if (!bookingData.ticketType) newErrors.ticketType = 'Please select a ticket type';
-    const quantity = parseInt(bookingData.quantity);
-    if (!bookingData.quantity || quantity < 1) {
+    const qty = parseInt(bookingData.quantity);
+    if (!bookingData.quantity || qty < 1) {
       newErrors.quantity = 'Please select quantity';
-    } else if (quantity > Math.min(10, getAvailableTicketCount())) {
+    } else if (qty > Math.min(10, getAvailableTicketCount())) {
       newErrors.quantity = `Maximum ${Math.min(10, getAvailableTicketCount())} tickets`;
     }
-
-    // Payment validation
-    if (!bookingData.paymentType) {
-      newErrors.paymentType = 'Please select a payment method';
-    }
+    if (!bookingData.paymentType) newErrors.paymentType = 'Please select a payment method';
     if (!bookingData.cardNumber.trim()) {
       newErrors.cardNumber = 'Card number is required';
     } else if (!/^\d{16}$/.test(bookingData.cardNumber.replace(/\s/g, ''))) {
@@ -195,96 +330,79 @@ export function BookingTicket() {
     } else if (!/^\d{3,4}$/.test(bookingData.cvv)) {
       newErrors.cvv = 'CVV must be 3 or 4 digits';
     }
-
     setFormErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     if (!validateForm()) return;
-    
     setIsSubmitting(true);
     setError('');
-    
+
     try {
       const quantity = parseInt(bookingData.quantity);
-      
-      const ticketTypeData = tickets.find(
-        t => t.type === bookingData.ticketType
-      );
+      const ticketTypeData = tickets.find(t => t.type === bookingData.ticketType);
+      if (!ticketTypeData) throw new Error('Invalid ticket type selected');
 
-      if (!ticketTypeData) {
-        throw new Error("Invalid ticket type selected");
-      }
+      const available = ticketTypeData.quantity - ticketTypeData.quantity_sold;
+      if (quantity > available) throw new Error('Not enough tickets available');
 
-      const available =
-        ticketTypeData.quantity - ticketTypeData.quantity_sold;
-
-        if (quantity > available) {
-        throw new Error("Not enough tickets available");
-      }
-
-      if (!bookingData.paymentType) {
-        throw new Error("Payment method is required");
-      }
-      
       const bookingPayload = {
         event_id: parseInt(eventId || '0'),
-
-        selected_ticket_id: tickets.find(
-          t => t.type === bookingData.ticketType
-        )?.ticket_id,
-
+        selected_ticket_id: ticketTypeData.ticket_id,
         name: `${bookingData.firstName} ${bookingData.lastName}`,
         contact_email: bookingData.email,
         contact_phone: bookingData.phone,
-
         address: `${bookingData.address}, ${bookingData.city}, ${bookingData.state} ${bookingData.zipcode}`,
-
         ticket_type: bookingData.ticketType,
-        quantity: quantity,
-
+        quantity,
         payment_type: bookingData.paymentType,
-        card_number_last_4: bookingData.cardNumber.slice(-4),
+        card_number_last_4: bookingData.cardNumber.replace(/\s/g, '').slice(-4),
         cardholder_name: bookingData.cardName,
-
         total_amount: totalPrice,
       };
-      
+
       const response = await fetch('/api/bookings/ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bookingPayload),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Booking failed');
       }
-      
+
       const result = await response.json();
-      
-      // Success! Show confirmation and navigate
-      alert(`Booking confirmed! Confirmation #${result.booking_id}\n\nYou will receive a confirmation email at ${bookingData.email}`);
-      navigate(`/${userType}/category/${category}`);
-      
+
+      // Show confirmation modal instead of alert
+      setBookingResult({
+        transaction_id: result.transaction_id,
+        quantity,
+        total_amount: result.total_amount,
+        ticketType: bookingData.ticketType,
+        eventName: event?.name || '',
+      });
+
     } catch (err: any) {
       setError(err.message);
-      alert(`Booking failed: ${err.message}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const formatCardNumber = (value: string) => {
-    const cleaned = value.replace(/\s/g, '');
-    const chunks = cleaned.match(/.{1,4}/g);
-    return chunks ? chunks.join(' ') : cleaned;
+  const handleEdit = () => {
+    // Close modal and stay on the form so user can change details and resubmit
+    setBookingResult(null);
+    setError('');
   };
 
-  const totalPrice = bookingData.ticketType 
+  const handleClose = () => {
+    navigate(`/${userType}/category/${category}`);
+  };
+
+  const totalPrice = bookingData.ticketType
     ? Number(getTicketPrice(bookingData.ticketType)) * parseInt(bookingData.quantity || '1')
     : 0;
 
@@ -309,9 +427,7 @@ export function BookingTicket() {
             <CardDescription>{error}</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button onClick={() => navigate(`/${userType}/categories`)}>
-              Return to Categories
-            </Button>
+            <Button onClick={() => navigate(`/${userType}/categories`)}>Return to Categories</Button>
           </CardContent>
         </Card>
       </div>
@@ -327,9 +443,7 @@ export function BookingTicket() {
             <CardDescription>The event you're looking for doesn't exist.</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button onClick={() => navigate(`/${userType}/categories`)}>
-              Return to Categories
-            </Button>
+            <Button onClick={() => navigate(`/${userType}/categories`)}>Return to Categories</Button>
           </CardContent>
         </Card>
       </div>
@@ -338,6 +452,16 @@ export function BookingTicket() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Confirmation modal — rendered on top when booking succeeds */}
+      {bookingResult && (
+        <ConfirmationModal
+          result={bookingResult}
+          onEdit={handleEdit}
+          onCancel={async () => {}}
+          onClose={handleClose}
+        />
+      )}
+
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-5xl mx-auto">
           <Link
@@ -350,13 +474,10 @@ export function BookingTicket() {
 
           <div className="mb-8">
             <h1 className="mb-2">Book Event</h1>
-            <p className="text-muted-foreground">
-              Complete the form below to book your tickets
-            </p>
+            <p className="text-muted-foreground">Complete the form below to book your tickets</p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Booking Form */}
             <div className="lg:col-span-2">
               <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Customer Information */}
@@ -416,10 +537,7 @@ export function BookingTicket() {
                           type="tel"
                           className={`pl-10 ${formErrors.phone ? 'border-destructive' : ''}`}
                           value={bookingData.phone}
-                          onChange={(e) => {
-                            const formatted = formatPhoneNumber(e.target.value);
-                            setBookingData({ ...bookingData, phone: formatted });
-                          }}
+                          onChange={(e) => setBookingData({ ...bookingData, phone: formatPhoneNumber(e.target.value) })}
                           placeholder="(555) 123-4567"
                         />
                       </div>
@@ -448,7 +566,6 @@ export function BookingTicket() {
                       />
                       {formErrors.address && <p className="text-sm text-destructive mt-1">{formErrors.address}</p>}
                     </div>
-
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <Label htmlFor="city">City *</Label>
@@ -472,7 +589,6 @@ export function BookingTicket() {
                         {formErrors.state && <p className="text-sm text-destructive mt-1">{formErrors.state}</p>}
                       </div>
                     </div>
-
                     <div>
                       <Label htmlFor="zipcode">Zipcode *</Label>
                       <Input
@@ -491,9 +607,7 @@ export function BookingTicket() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Ticket Selection</CardTitle>
-                    <CardDescription>
-                      Select your ticket type and quantity
-                    </CardDescription>
+                    <CardDescription>Select your ticket type and quantity</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
@@ -510,10 +624,7 @@ export function BookingTicket() {
                             <SelectItem key={type} value={type}>
                               <div className="flex items-center justify-between w-full gap-4">
                                 <span>{type} - ${Number(getTicketPrice(type)).toFixed(2)}</span>
-
-                                <span className="text-xs text-muted-foreground">
-                                  {getAvailableByType(type)} left
-                                </span>
+                                <span className="text-xs text-muted-foreground">{getAvailableByType(type)} left</span>
                               </div>
                             </SelectItem>
                           ))}
@@ -534,9 +645,7 @@ export function BookingTicket() {
                         className={formErrors.quantity ? 'border-destructive' : ''}
                       />
                       {formErrors.quantity && <p className="text-sm text-destructive mt-1">{formErrors.quantity}</p>}
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {getAvailableTicketCount()} tickets available
-                      </p>
+                      <p className="text-sm text-muted-foreground mt-1">{getAvailableTicketCount()} tickets available</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -549,25 +658,20 @@ export function BookingTicket() {
                       Payment Information
                     </CardTitle>
                     <Label>Payment Method</Label>
-                      <Select
-                        value={bookingData.paymentType}
-                        onValueChange={(value) =>
-                          setBookingData(prev => ({ ...prev, paymentType: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select payment method" />
-                        </SelectTrigger>
-
-                        <SelectContent>
-                          <SelectItem value="credit_card">Credit Card</SelectItem>
-                          <SelectItem value="debit_card">Debit Card</SelectItem>
-                          <SelectItem value="apple_pay">Apple Pay</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    <CardDescription>
-                      Enter your payment details
-                    </CardDescription>
+                    <Select
+                      value={bookingData.paymentType}
+                      onValueChange={(value) => setBookingData(prev => ({ ...prev, paymentType: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select payment method" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="credit_card">Credit Card</SelectItem>
+                        <SelectItem value="debit_card">Debit Card</SelectItem>
+                        <SelectItem value="apple_pay">Apple Pay</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <CardDescription>Enter your payment details</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
@@ -575,10 +679,7 @@ export function BookingTicket() {
                       <Input
                         id="cardNumber"
                         value={bookingData.cardNumber}
-                        onChange={(e) => {
-                          const formatted = formatCardNumber(e.target.value.replace(/\D/g, '').slice(0, 16));
-                          setBookingData({ ...bookingData, cardNumber: formatted });
-                        }}
+                        onChange={(e) => setBookingData({ ...bookingData, cardNumber: formatCardNumber(e.target.value.replace(/\D/g, '').slice(0, 16)) })}
                         placeholder="1234 5678 9012 3456"
                         maxLength={19}
                         className={formErrors.cardNumber ? 'border-destructive' : ''}
@@ -687,15 +788,11 @@ export function BookingTicket() {
                     <div className="space-y-2 text-sm text-muted-foreground">
                       <div className="flex items-center gap-2">
                         <Calendar className="size-4" />
-                        <span>{new Date(event.date).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric'
-                        })}</span>
+                        <span>{new Date(event.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Clock className="size-4" />
-                        <span>{event.start_time.slice(0, 5)} - {event.end_time.slice(0, 5)}</span>
+                        <span>{event.start_time?.slice(0, 5)} - {event.end_time?.slice(0, 5)}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <MapPin className="size-4" />

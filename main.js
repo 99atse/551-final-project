@@ -110,6 +110,26 @@ app.get('/api/events', async (req, res) => {
   }
 })
 
+// Returns events that don't yet have a pending/confirmed venue booking
+app.get('/api/events/unbooked', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT e.event_id, e.name, lower(e.event_time_range)::date AS date
+       FROM events e
+       WHERE NOT EXISTS (
+         SELECT 1 FROM venue_bookings vb
+         WHERE vb.event_id = e.event_id
+           AND vb.status IN ('pending', 'confirmed')
+       )
+       ORDER BY lower(e.event_time_range) ASC`
+    )
+    res.json(rows)
+  } catch (err) {
+    console.error('Error fetching unbooked events:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 app.get('/api/events/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -148,6 +168,29 @@ app.get('/api/events/:id', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+
+// Category counts
+app.get("/api/categories/counts", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT type, COUNT(*) AS count
+      FROM events
+      WHERE status = 'scheduled'
+      GROUP BY type;
+    `);
+
+    const counts = {};
+
+    result.rows.forEach(row => {
+      counts[row.type] = Number(row.count);
+    });
+
+    res.json(counts);
+  } catch (err) {
+    console.error("Error fetching category counts:", err);
+    res.status(500).json({ error: "Failed to fetch category counts" });
+  }
+});
 
 // ── Tickets ───────────────────────────────────────────────
 
@@ -194,6 +237,20 @@ app.get('/api/venues', async (req, res) => {
   }
 })
 
+app.get('/api/venues/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM venues WHERE venue_id = $1`,
+      [req.params.id]
+    )
+    if (!rows.length) return res.status(404).json({ error: 'Venue not found' })
+    res.json(rows[0])
+  } catch (err) {
+    console.error('Error fetching venue:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Check venue availability using venue_availability table and TSRANGE overlap
 app.get('/api/venues/:venueId/availability', async (req, res) => {
   const { eventId } = req.query
@@ -206,7 +263,18 @@ app.get('/api/venues/:venueId/availability', async (req, res) => {
 
     const { event_time_range } = eventResult.rows[0]
 
-    // Check venue_availability for overlapping booked slots
+    // Check if this event already has a confirmed venue booking
+    const alreadyBooked = await pool.query(
+      `SELECT venue_booking_id FROM venue_bookings
+       WHERE event_id = $1 AND status IN ('pending', 'confirmed')`,
+      [eventId]
+    )
+
+    if (alreadyBooked.rows.length > 0) {
+      return res.json({ available: false, reason: 'This event already has a venue booking' })
+    }
+
+    // Check venue_availability for overlapping booked slots from other events
     const conflictResult = await pool.query(
       `SELECT venue_id FROM venue_availability
        WHERE venue_id = $1
@@ -359,19 +427,26 @@ app.post('/api/bookings/venue', async (req, res) => {
 
     await client.query('BEGIN')
 
-    // 1. Get event time range
+    // 1. Get event time range and venue rental rate separately
+    //    (the event is not pre-linked to this venue — the organizer is booking it now)
     const eventResult = await client.query(
-      `SELECT e.event_time_range, v.base_rental_rate
-       FROM events e
-       JOIN venues v ON e.venue_id = v.venue_id
-       WHERE e.event_id = $1 AND e.venue_id = $2`,
-      [event_id, venue_id]
+      'SELECT event_time_range FROM events WHERE event_id = $1',
+      [event_id]
+    )
+    const venueResult = await client.query(
+      'SELECT base_rental_rate FROM venues WHERE venue_id = $1',
+      [venue_id]
     )
     if (!eventResult.rows.length) {
       await client.query('ROLLBACK')
-      return res.status(404).json({ error: 'Event or venue not found' })
+      return res.status(404).json({ error: 'Event not found' })
     }
-    const { event_time_range, base_rental_rate } = eventResult.rows[0]
+    if (!venueResult.rows.length) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Venue not found' })
+    }
+    const { event_time_range } = eventResult.rows[0]
+    const { base_rental_rate } = venueResult.rows[0]
 
     // 2. Check venue_availability for conflicts using TSRANGE overlap
     const conflictCheck = await client.query(
@@ -457,6 +532,153 @@ app.post('/api/bookings/venue', async (req, res) => {
     await client.query('ROLLBACK')
     console.error('Venue booking error:', err)
     res.status(500).json({ error: 'Failed to create booking: ' + err.message })
+  } finally {
+    client.release()
+  }
+})
+
+// PATCH cancel a ticket booking within 2 minutes of creation
+app.patch('/api/bookings/ticket/:transactionId/cancel', async (req, res) => {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    // 1. Find the transaction and check it's within the 2-minute window
+    const txResult = await client.query(
+      `SELECT transaction_id, status, transaction_time
+       FROM transactions
+       WHERE transaction_id = $1 AND type = 'customer'
+       FOR UPDATE`,
+      [req.params.transactionId]
+    )
+
+    if (!txResult.rows.length) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Booking not found' })
+    }
+
+    const tx = txResult.rows[0]
+
+    if (tx.status === 'cancelled') {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'Booking is already cancelled' })
+    }
+
+    // Check 2-minute window
+    const createdAt = new Date(tx.transaction_time)
+    const now = new Date()
+    const diffSeconds = (now.getTime() - createdAt.getTime()) / 1000
+
+    if (diffSeconds > 120) {
+      await client.query('ROLLBACK')
+      return res.status(403).json({ error: 'Cancellation window has expired (2 minutes)' })
+    }
+
+    // 2. Find the tickets linked to this transaction
+    const ticketRows = await client.query(
+      `SELECT tt.ticket_id, tt.price_paid
+       FROM transaction_tickets tt
+       WHERE tt.transaction_id = $1`,
+      [req.params.transactionId]
+    )
+
+    // 3. Decrement quantity_sold for each ticket (releases them back)
+    for (const row of ticketRows.rows) {
+      await client.query(
+        `UPDATE tickets
+         SET quantity_sold = GREATEST(quantity_sold - 1, 0)
+         WHERE ticket_id = $1`,
+        [row.ticket_id]
+      )
+    }
+
+    // 4. Mark transaction as cancelled
+    await client.query(
+      `UPDATE transactions SET status = 'cancelled' WHERE transaction_id = $1`,
+      [req.params.transactionId]
+    )
+
+    // 5. Mark payment as refunded
+    await client.query(
+      `UPDATE payments SET payment_status = 'refunded' WHERE transaction_id = $1`,
+      [req.params.transactionId]
+    )
+
+    await client.query('COMMIT')
+    res.json({ success: true, message: 'Booking cancelled and tickets released' })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    console.error('Cancel booking error:', err)
+    res.status(500).json({ error: err.message })
+  } finally {
+    client.release()
+  }
+})
+
+// Add this route to main.js alongside the other booking routes
+
+// PATCH cancel a venue booking within 2 minutes of creation
+app.patch('/api/bookings/venue/:venueBookingId/cancel', async (req, res) => {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    // 1. Find the venue booking and its transaction, check 2-minute window
+    const bookingResult = await client.query(
+      `SELECT vb.venue_booking_id, vb.status, vb.transaction_id, t.transaction_time
+       FROM venue_bookings vb
+       JOIN transactions t ON vb.transaction_id = t.transaction_id
+       WHERE vb.venue_booking_id = $1
+       FOR UPDATE`,
+      [req.params.venueBookingId]
+    )
+
+    if (!bookingResult.rows.length) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Venue booking not found' })
+    }
+
+    const booking = bookingResult.rows[0]
+
+    if (booking.status === 'cancelled') {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'Booking is already cancelled' })
+    }
+
+    // Check 2-minute window using transaction_time
+    const createdAt = new Date(booking.transaction_time)
+    const now = new Date()
+    const diffSeconds = (now.getTime() - createdAt.getTime()) / 1000
+
+    if (diffSeconds > 120) {
+      await client.query('ROLLBACK')
+      return res.status(403).json({ error: 'Cancellation window has expired (2 minutes)' })
+    }
+
+    // 2. Cancel the venue booking
+    await client.query(
+      `UPDATE venue_bookings SET status = 'cancelled' WHERE venue_booking_id = $1`,
+      [req.params.venueBookingId]
+    )
+
+    // 3. Cancel the transaction
+    await client.query(
+      `UPDATE transactions SET status = 'cancelled' WHERE transaction_id = $1`,
+      [booking.transaction_id]
+    )
+
+    // 4. Mark payment as refunded
+    await client.query(
+      `UPDATE payments SET payment_status = 'refunded' WHERE transaction_id = $1`,
+      [booking.transaction_id]
+    )
+
+    await client.query('COMMIT')
+    res.json({ success: true, message: 'Venue booking cancelled' })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    console.error('Cancel venue booking error:', err)
+    res.status(500).json({ error: err.message })
   } finally {
     client.release()
   }
