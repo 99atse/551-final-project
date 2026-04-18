@@ -7,9 +7,15 @@ interface VenueAvailabilityButtonProps {
   eventId: number
   venueId: number
   userType: string
+  category?: string
 }
 
-export function VenueAvailabilityButton({ eventId, venueId, userType }: VenueAvailabilityButtonProps) {
+export function VenueAvailabilityButton({
+  eventId,
+  venueId,
+  userType,
+  category,
+}: VenueAvailabilityButtonProps) {
   const [checking, setChecking] = useState(true)
   const [available, setAvailable] = useState<boolean | null>(null)
   const [reason, setReason] = useState('')
@@ -28,6 +34,7 @@ export function VenueAvailabilityButton({ eventId, venueId, userType }: VenueAva
         setChecking(false)
       }
     }
+
     checkAvailability()
   }, [eventId, venueId])
 
@@ -56,7 +63,7 @@ export function VenueAvailabilityButton({ eventId, venueId, userType }: VenueAva
           <span className="text-green-700 font-medium">Venue Available</span>
         </div>
         <Button asChild>
-          <Link to={`/${userType}/book/${eventId}`}>
+          <Link to={`/${userType}/category/${category}/book-venue/${eventId}`}>
             Book Venue
           </Link>
         </Button>
