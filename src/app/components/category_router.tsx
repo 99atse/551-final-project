@@ -1,6 +1,7 @@
 import { useParams } from "react-router-dom";
 import { EventQuery } from "./event_query";
 import { VenueQuery } from "./venue_query";
+import { AnalyticsQuery } from "./analytics_query";
 
 const CATEGORY_MODE_MAP: Record<string, "events" | "venues"> = {
   "sporting-events": "venues",
@@ -18,15 +19,10 @@ export function CategoryRouter() {
 
   if (!category || !userType) return null;
 
-  // default fallback
+  if (userType === "researcher") return <AnalyticsQuery />;
+
+  if (userType === "organizer") return <VenueQuery />;
+
   const mode = CATEGORY_MODE_MAP[category] ?? "events";
-
-  // organizer override (optional rule you had earlier)
-  const isOrganizer = userType === "organizer";
-
-  if (isOrganizer) {
-    return <VenueQuery />;
-  }
-
   return mode === "venues" ? <VenueQuery /> : <EventQuery />;
 }
