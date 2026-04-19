@@ -150,21 +150,87 @@ app.get('/api/events/:id/tickets', async (req, res) => {
 
 // ── Venues ────────────────────────────────────────────────
 
+// ═══════════════════════════════════════════════════════════
+// FIX 1: Replace your GET /api/venues route in main.js
+// It now joins venue_availability so each available slot = 1 row,
+// and supports the bookingTime filter using TSRANGE overlap (&&)
+// ═══════════════════════════════════════════════════════════
+
 app.get('/api/venues', async (req, res) => {
-  const { search, city, state, venueType, minCapacity, maxCapacity, minRentalRate, maxRentalRate, minVenueRating } = req.query
+  const { search, city, state, venueType, minCapacity, maxCapacity, minRentalRate, maxRentalRate, minVenueRating, bookingTimeRange } = req.query
   try {
     const params = []
-    let query = `SELECT v.*, COUNT(DISTINCT e.event_id) AS total_events, AVG(e.rating) AS avg_event_rating FROM venues v LEFT JOIN events e ON v.venue_id = e.venue_id WHERE true`
-    if (search)        { params.push(`%${search}%`);          query += ` AND v.name ILIKE $${params.length}` }
-    if (city)          { params.push(`%${city}%`);            query += ` AND v.city ILIKE $${params.length}` }
-    if (state)         { params.push(state);                   query += ` AND v.state = $${params.length}` }
-    if (venueType)     { params.push(`%${venueType}%`);       query += ` AND v.venue_type ILIKE $${params.length}` }
-    if (minCapacity)   { params.push(parseInt(minCapacity));   query += ` AND v.max_capacity >= $${params.length}` }
-    if (maxCapacity)   { params.push(parseInt(maxCapacity));   query += ` AND v.max_capacity <= $${params.length}` }
+    // JOIN venue_availability so each available time slot produces a separate row.
+    // This is what lets the same venue appear twice if it has two available slots.
+    let query = `
+      SELECT
+        v.venue_id,
+        v.name,
+        v.city,
+        v.state,
+        v.venue_type,
+        v.base_rental_rate,
+        v.max_capacity,
+        v.contact_name,
+        v.contact_phone,
+        v.contact_email,
+        v.rating,
+        COUNT(DISTINCT e.event_id) AS total_events,
+        AVG(e.rating)              AS avg_event_rating,
+        va.booking_time_range,
+        va.status                  AS availability_status
+      FROM venues v
+      JOIN venue_availability va ON v.venue_id = va.venue_id
+      LEFT JOIN events e ON v.venue_id = e.venue_id
+      WHERE va.status = 'available'
+    `
+
+    if (search)        { params.push(`%${search}%`);           query += ` AND v.name ILIKE $${params.length}` }
+    if (city)          { params.push(`%${city}%`);             query += ` AND v.city ILIKE $${params.length}` }
+    if (state)         { params.push(state);                    query += ` AND v.state = $${params.length}` }
+    if (venueType)     { params.push(`%${venueType}%`);        query += ` AND v.venue_type ILIKE $${params.length}` }
+    if (minCapacity)   { params.push(parseInt(minCapacity));    query += ` AND v.max_capacity >= $${params.length}` }
+    if (maxCapacity)   { params.push(parseInt(maxCapacity));    query += ` AND v.max_capacity <= $${params.length}` }
     if (minRentalRate) { params.push(parseFloat(minRentalRate)); query += ` AND v.base_rental_rate >= $${params.length}` }
     if (maxRentalRate) { params.push(parseFloat(maxRentalRate)); query += ` AND v.base_rental_rate <= $${params.length}` }
     if (minVenueRating){ params.push(parseFloat(minVenueRating)); query += ` AND v.rating >= $${params.length}` }
-    query += ` GROUP BY v.venue_id ORDER BY v.rating DESC`
+
+    // Time filter: user inputs a time like "16:00" and we find all slots
+    // whose booking_time_range overlaps a 1-minute window at that time.
+    // e.g. a venue available 15:00–17:00 will match a search for "16:00"
+    // because [16:00, 16:01) && [15:00, 17:00) is true.
+    if (bookingTimeRange) {
+      // Parse the time input — accept HH:MM or HH:MM-HH:MM formats
+      const timeStr = bookingTimeRange.trim()
+      const rangeMatch = timeStr.match(/^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/)
+      const singleMatch = timeStr.match(/^(\d{1,2}:\d{2})$/)
+
+      if (rangeMatch) {
+        // User typed a range like "14:00-18:00" — use it directly as a TSRANGE
+        const today = new Date().toISOString().split('T')[0]
+        const tsFrom = `${today} ${rangeMatch[1]}`
+        const tsTo   = `${today} ${rangeMatch[2]}`
+        params.push(`[${tsFrom}, ${tsTo})`)
+        query += ` AND va.booking_time_range && $${params.length}::tsrange`
+      } else if (singleMatch) {
+        // User typed a single time like "16:00" — find any slot containing that moment
+        const today = new Date().toISOString().split('T')[0]
+        const tsPoint = `${today} ${singleMatch[1]}`
+        params.push(`[${tsPoint}, ${tsPoint}]`)
+        query += ` AND va.booking_time_range && $${params.length}::tsrange`
+      }
+    }
+
+    // Group by both venue AND the specific availability slot so each slot is its own row
+    query += `
+      GROUP BY
+        v.venue_id, v.name, v.city, v.state, v.venue_type,
+        v.base_rental_rate, v.max_capacity, v.contact_name,
+        v.contact_phone, v.contact_email, v.rating,
+        va.booking_time_range, va.status
+      ORDER BY v.rating DESC, lower(va.booking_time_range) ASC
+    `
+
     const { rows } = await pool.query(query, params)
     res.json(rows)
   } catch (err) {
@@ -229,7 +295,7 @@ app.get('/api/venues/:venueId/availability', async (req, res) => {
     const alreadyBooked = await pool.query(`SELECT venue_booking_id FROM venue_bookings WHERE event_id = $1 AND status IN ('pending', 'confirmed')`, [eventId])
     if (alreadyBooked.rows.length > 0) return res.json({ available: false, reason: 'This event already has a venue booking' })
     const conflictResult = await pool.query(
-      `SELECT venue_id FROM venue_availability WHERE venue_id = $1 AND status IN ('booked', 'maintenance') AND booking_time_range && $2::tsrange AND (event_id IS NULL OR event_id != $3)`,
+      `SELECT venue_id FROM venue_availability WHERE venue_id = $1 AND status IN ('booked', 'maintenance') AND booking_time_range && $2::tsrange AND (event_id != $3)`,
       [req.params.venueId, event_time_range, eventId]
     )
     res.json({ available: conflictResult.rows.length === 0 })
@@ -434,8 +500,15 @@ app.post('/api/bookings/ticket', async (req, res) => {
     await client.query(`UPDATE tickets SET quantity_sold = quantity_sold + $1 WHERE ticket_id = $2`, [qty, selected_ticket_id])
     await client.query(`INSERT INTO payments (transaction_id,payment_type,payment_status,card_last_4,total_amount,billing_address) VALUES ($1,$2,'completed',$3,$4,$5)`, [transactionId, payment_type, card_number_last_4||null, finalTotal, address||null])
     await client.query('COMMIT')
-    res.status(201).json({ success: true, booking_id: transactionId, transaction_id: transactionId, quantity: qty, total_amount: finalTotal, message: 'Ticket booked successfully' })
-  } catch (err) {
+    res.status(201).json({
+      success: true,
+      venue_booking_id: bookingResult.rows[0].venue_booking_id,
+      transaction_id: transactionId,
+      negotiated_price: finalPrice,
+      event_name: event_name, // ✅ ADD THIS
+      message: 'Venue booking created successfully'
+    })  
+    } catch (err) {
     await client.query('ROLLBACK')
     console.error('Ticket booking error:', err)
     res.status(500).json({ error: 'Failed to create booking: ' + err.message })
@@ -446,17 +519,34 @@ app.post('/api/bookings/ticket', async (req, res) => {
 app.post('/api/bookings/venue', async (req, res) => {
   const client = await pool.connect()
   try {
-    const { event_id, venue_id, name, contact_email, contact_phone, address, age, gender, affiliated_organization, negotiated_price, payment_type, card_last_4, billing_address } = req.body
-    if (!event_id || !venue_id || !name || !contact_email || !contact_phone) return res.status(400).json({ error: 'Missing required fields' })
+    const { venue_id, event_name, event_description, event_start, event_end, event_type, name, contact_email, contact_phone, address, age, gender, affiliated_organization, negotiated_price, payment_type, card_last_4, billing_address } = req.body
+    if (!venue_id || !event_name || !event_start || !event_end || !name || !contact_email || !contact_phone) return res.status(400).json({ error: 'Missing required fields' })
+
+    const eventStartDate = new Date(event_start)
+    const eventEndDate = new Date(event_end)
+    if (Number.isNaN(eventStartDate.getTime()) || Number.isNaN(eventEndDate.getTime()) || eventEndDate <= eventStartDate) {
+      return res.status(400).json({ error: 'Invalid event time range' })
+    }
+
     await client.query('BEGIN')
-    const eventResult = await client.query(`SELECT event_time_range FROM events WHERE event_id = $1`, [event_id])
-    const venueResult = await client.query(`SELECT base_rental_rate FROM venues WHERE venue_id = $1`, [venue_id])
-    if (!eventResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Event not found' }) }
+
+    const event_time_range = `[${event_start}, ${event_end})`
+    const venueResult = await client.query(`SELECT base_rental_rate, max_capacity FROM venues WHERE venue_id = $1`, [venue_id])
     if (!venueResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Venue not found' }) }
-    const { event_time_range } = eventResult.rows[0]
-    const { base_rental_rate } = venueResult.rows[0]
-    const conflictCheck = await client.query(`SELECT venue_id FROM venue_availability WHERE venue_id=$1 AND status IN ('booked','maintenance') AND booking_time_range && $2::tsrange AND (event_id IS NULL OR event_id != $3)`, [venue_id, event_time_range, event_id])
+    const { base_rental_rate, max_capacity } = venueResult.rows[0]
+
+    const conflictCheck = await client.query(`SELECT venue_id FROM venue_availability WHERE venue_id=$1 AND status IN ('booked','maintenance') AND booking_time_range && $2::tsrange`, [venue_id, event_time_range])
     if (conflictCheck.rows.length > 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Venue already booked for this time slot' }) }
+
+    const normalizedEventType = (event_type || 'venue booking').toString().replace(/-/g, ' ').trim()
+    const eventInsert = await client.query(
+      `INSERT INTO events (name, venue_id, event_time_range, capacity, type, status, is_sold_out, description)
+       VALUES ($1, $2, $3::tsrange, $4, $5, 'scheduled', FALSE, $6)
+       RETURNING event_id`,
+      [event_name, venue_id, event_time_range, max_capacity, normalizedEventType, event_description || null]
+    )
+    const event_id = eventInsert.rows[0].event_id
+
     let customerId
     const existingCustomer = await client.query(`SELECT customer_id FROM customers WHERE contact_email = $1`, [contact_email])
     if (existingCustomer.rows.length > 0) {
@@ -470,10 +560,22 @@ app.post('/api/bookings/venue', async (req, res) => {
     const txResult = await client.query(`INSERT INTO transactions (customer_id,type,status) VALUES ($1,'booker','pending') RETURNING transaction_id`, [customerId])
     const transactionId = txResult.rows[0].transaction_id
     const bookingResult = await client.query(`INSERT INTO venue_bookings (event_id,venue_id,customer_id,transaction_id,negotiated_price,status) VALUES ($1,$2,$3,$4,$5,'pending') RETURNING venue_booking_id`, [event_id, venue_id, customerId, transactionId, finalPrice])
-    await client.query(`INSERT INTO venue_availability (venue_id,booking_time_range,status,event_id) VALUES ($1,$2,'booked',$3)`, [venue_id, event_time_range, event_id])
+
+    const availabilityUpdate = await client.query(
+      `UPDATE venue_availability
+       SET status='booked', event_id=$1
+       WHERE venue_id=$2 AND booking_time_range=$3::tsrange AND status='available'
+       RETURNING venue_id`,
+      [event_id, venue_id, event_time_range]
+    )
+    if (!availabilityUpdate.rows.length) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'Selected venue slot is no longer available' })
+    }
+
     await client.query(`INSERT INTO payments (transaction_id,payment_type,payment_status,card_last_4,total_amount,billing_address) VALUES ($1,$2,'pending',$3,$4,$5)`, [transactionId, payment_type, card_last_4||null, finalPrice, billing_address||null])
     await client.query('COMMIT')
-    res.status(201).json({ success: true, venue_booking_id: bookingResult.rows[0].venue_booking_id, transaction_id: transactionId, negotiated_price: finalPrice, message: 'Venue booking created successfully' })
+    res.status(201).json({ success: true, venue_booking_id: bookingResult.rows[0].venue_booking_id, transaction_id: transactionId, negotiated_price: finalPrice, event_name: event_name, message: 'Venue booking created successfully' })
   } catch (err) {
     await client.query('ROLLBACK')
     console.error('Venue booking error:', err)
@@ -514,8 +616,11 @@ app.patch('/api/bookings/venue/:venueBookingId/cancel', async (req, res) => {
   try {
     await client.query('BEGIN')
     const bookingResult = await client.query(
-      `SELECT vb.venue_booking_id, vb.status, vb.transaction_id, vb.venue_id, vb.event_id, t.transaction_time
-       FROM venue_bookings vb JOIN transactions t ON vb.transaction_id=t.transaction_id
+      `SELECT vb.venue_booking_id, vb.status, vb.transaction_id, vb.venue_id, vb.event_id,
+              e.event_time_range, t.transaction_time
+       FROM venue_bookings vb
+       JOIN transactions t ON vb.transaction_id=t.transaction_id
+       JOIN events e ON vb.event_id=e.event_id
        WHERE vb.venue_booking_id=$1 FOR UPDATE`,
       [req.params.venueBookingId]
     )
@@ -525,8 +630,24 @@ app.patch('/api/bookings/venue/:venueBookingId/cancel', async (req, res) => {
     const diffSeconds = (new Date().getTime() - new Date(booking.transaction_time).getTime()) / 1000
     if (diffSeconds > 120) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Cancellation window has expired (2 minutes)' }) }
     await client.query(`UPDATE venue_bookings SET status='cancelled' WHERE venue_booking_id=$1`, [req.params.venueBookingId])
-    // Remove booked slot so venue becomes available again
-    await client.query(`DELETE FROM venue_availability WHERE venue_id=$1 AND event_id=$2 AND status='booked'`, [booking.venue_id, booking.event_id])
+    // Restore the exact slot so it appears again in available venue searches.
+    // Fallback upsert handles legacy data where the booked row may not exist.
+    const restoreAvailability = await client.query(
+      `UPDATE venue_availability
+       SET status='available', event_id=NULL
+       WHERE venue_id=$1 AND event_id=$2
+       RETURNING venue_id`,
+      [booking.venue_id, booking.event_id]
+    )
+    if (!restoreAvailability.rows.length) {
+      await client.query(
+        `INSERT INTO venue_availability (venue_id, booking_time_range, status, event_id)
+         VALUES ($1, $2::tsrange, 'available', NULL)
+         ON CONFLICT (venue_id, booking_time_range)
+         DO UPDATE SET status='available', event_id=NULL`,
+        [booking.venue_id, booking.event_time_range]
+      )
+    }
     await client.query(`UPDATE transactions SET status='cancelled' WHERE transaction_id=$1`, [booking.transaction_id])
     await client.query(`UPDATE payments SET payment_status='refunded' WHERE transaction_id=$1`, [booking.transaction_id])
     await client.query('COMMIT')
