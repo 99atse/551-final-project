@@ -4,8 +4,8 @@ import { VenueQuery } from "./venue_query";
 import { AnalyticsQuery } from "./analytics_query";
 
 const CATEGORY_MODE_MAP: Record<string, "events" | "venues"> = {
-  "sporting-events": "venues",
-  "weddings": "venues",
+  "sporting-events": "events",
+  "weddings": "events",
   "concerts-festivals": "events",
   "conventions": "events",
   "conferences": "events",
