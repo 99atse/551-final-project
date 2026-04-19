@@ -5,7 +5,6 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
@@ -303,10 +302,13 @@ export function BookingTicket() {
     if (!bookingData.zipcode.trim()) newErrors.zipcode = 'Zipcode is required';
     if (!bookingData.ticketType) newErrors.ticketType = 'Please select a ticket type';
     const qty = parseInt(bookingData.quantity);
+    const maxBySelectedType = bookingData.ticketType
+      ? Math.min(10, getAvailableByType(bookingData.ticketType))
+      : Math.min(10, getAvailableTicketCount());
     if (!bookingData.quantity || qty < 1) {
       newErrors.quantity = 'Please select quantity';
-    } else if (qty > Math.min(10, getAvailableTicketCount())) {
-      newErrors.quantity = `Maximum ${Math.min(10, getAvailableTicketCount())} tickets`;
+    } else if (qty > maxBySelectedType) {
+      newErrors.quantity = `Maximum ${maxBySelectedType} tickets`;
     }
     if (!bookingData.paymentType) newErrors.paymentType = 'Please select a payment method';
     if (!bookingData.cardNumber.trim()) {
@@ -337,7 +339,7 @@ export function BookingTicket() {
       const ticketTypeData = tickets.find(t => t.type === bookingData.ticketType);
       if (!ticketTypeData) throw new Error('Invalid ticket type selected');
 
-      const available = ticketTypeData.quantity - ticketTypeData.quantity_sold;
+      const available = getAvailableByType(bookingData.ticketType);
       if (quantity > available) throw new Error('Not enough tickets available');
 
       const bookingPayload = {
@@ -631,7 +633,9 @@ export function BookingTicket() {
                         id="quantity"
                         type="number"
                         min="1"
-                        max={Math.min(10, getAvailableTicketCount())}
+                        max={bookingData.ticketType
+                          ? Math.min(10, getAvailableByType(bookingData.ticketType))
+                          : Math.min(10, getAvailableTicketCount())}
                         value={bookingData.quantity}
                         onChange={(e) => setBookingData({ ...bookingData, quantity: e.target.value })}
                         className={formErrors.quantity ? 'border-destructive' : ''}
@@ -811,9 +815,6 @@ export function BookingTicket() {
                     )}
                   </div>
 
-                  <Badge variant="secondary" className="w-full justify-center">
-                    {getAvailableTicketCount()} tickets available
-                  </Badge>
                 </CardContent>
               </Card>
             </div>

@@ -555,16 +555,71 @@ app.get('/api/analytics/venues/:id', async (req, res) => {
 app.post('/api/bookings/ticket', async (req, res) => {
   const client = await pool.connect()
   try {
-    const { event_id, selected_ticket_id, quantity, name, contact_email, contact_phone, address, age, gender, payment_type, card_number_last_4, total_amount } = req.body
+    const { event_id, selected_ticket_id, quantity, name, contact_email, contact_phone, address, age, gender, payment_type, card_number_last_4 } = req.body
     const qty = parseInt(quantity) || 1
     if (!event_id || !selected_ticket_id || !name || !contact_email || !contact_phone) return res.status(400).json({ error: 'Missing required fields' })
+    if (qty < 1) return res.status(400).json({ error: 'Quantity must be at least 1' })
     await client.query('BEGIN')
-    const ticketCheck = await client.query(`SELECT ticket_id, status, face_value_price, quantity, quantity_sold FROM tickets WHERE ticket_id = $1 FOR UPDATE`, [selected_ticket_id])
+    const ticketCheck = await client.query(
+      `SELECT ticket_id, event_id, type, seat_location, face_value_price, quantity, quantity_sold
+       FROM tickets
+       WHERE ticket_id = $1
+       FOR UPDATE`,
+      [selected_ticket_id]
+    )
     if (!ticketCheck.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Ticket not found' }) }
     const ticket = ticketCheck.rows[0]
-    const available = ticket.quantity - ticket.quantity_sold
-    if (available < qty) { await client.query('ROLLBACK'); return res.status(400).json({ error: `Only ${available} ticket(s) available, but ${qty} requested` }) }
-    const finalTotal = total_amount || (Number(ticket.face_value_price) * qty)
+
+    const ticketSelections = []
+
+    // GA/pool inventory lives in one row; reserved seats usually use one row per seat.
+    if (ticket.seat_location === 'GA' || Number(ticket.quantity) > 1) {
+      const available = Number(ticket.quantity) - Number(ticket.quantity_sold)
+      if (available < qty) {
+        await client.query('ROLLBACK')
+        return res.status(400).json({ error: `Only ${available} ticket(s) available, but ${qty} requested` })
+      }
+      ticketSelections.push({
+        ticket_id: ticket.ticket_id,
+        quantity_to_book: qty,
+        unit_price: Number(ticket.face_value_price),
+      })
+    } else {
+      const sameTypeAvailable = await client.query(
+        `SELECT ticket_id, quantity, quantity_sold, face_value_price
+         FROM tickets
+         WHERE event_id = $1
+           AND type = $2
+           AND (quantity - quantity_sold) > 0
+         ORDER BY face_value_price ASC, ticket_id ASC
+         FOR UPDATE`,
+        [ticket.event_id, ticket.type]
+      )
+
+      let remaining = qty
+      for (const row of sameTypeAvailable.rows) {
+        if (remaining <= 0) break
+        const rowAvailable = Number(row.quantity) - Number(row.quantity_sold)
+        if (rowAvailable <= 0) continue
+
+        const bookQty = Math.min(remaining, rowAvailable)
+        ticketSelections.push({
+          ticket_id: row.ticket_id,
+          quantity_to_book: bookQty,
+          unit_price: Number(row.face_value_price),
+        })
+        remaining -= bookQty
+      }
+
+      if (remaining > 0) {
+        const totalAvailable = ticketSelections.reduce((sum, s) => sum + s.quantity_to_book, 0)
+        await client.query('ROLLBACK')
+        return res.status(400).json({ error: `Only ${totalAvailable} ticket(s) available, but ${qty} requested` })
+      }
+    }
+
+    const finalTotal = ticketSelections.reduce((sum, s) => sum + (s.unit_price * s.quantity_to_book), 0)
+
     let customerId
     const existingCustomer = await client.query(`SELECT customer_id FROM customers WHERE contact_email = $1`, [contact_email])
     if (existingCustomer.rows.length > 0) {
@@ -576,17 +631,25 @@ app.post('/api/bookings/ticket', async (req, res) => {
     }
     const txResult = await client.query(`INSERT INTO transactions (customer_id,type,status) VALUES ($1,'customer','completed') RETURNING transaction_id`, [customerId])
     const transactionId = txResult.rows[0].transaction_id
-    await client.query(`INSERT INTO transaction_tickets (transaction_id,ticket_id,price_paid) VALUES ($1,$2,$3)`, [transactionId, selected_ticket_id, finalTotal])
-    await client.query(`UPDATE tickets SET quantity_sold = quantity_sold + $1 WHERE ticket_id = $2`, [qty, selected_ticket_id])
+
+    for (const selection of ticketSelections) {
+      await client.query(
+        `INSERT INTO transaction_tickets (transaction_id,ticket_id,price_paid) VALUES ($1,$2,$3)`,
+        [transactionId, selection.ticket_id, selection.unit_price * selection.quantity_to_book]
+      )
+      await client.query(
+        `UPDATE tickets SET quantity_sold = quantity_sold + $1 WHERE ticket_id = $2`,
+        [selection.quantity_to_book, selection.ticket_id]
+      )
+    }
+
     await client.query(`INSERT INTO payments (transaction_id,payment_type,payment_status,card_last_4,total_amount,billing_address) VALUES ($1,$2,'completed',$3,$4,$5)`, [transactionId, payment_type, card_number_last_4||null, finalTotal, address||null])
     await client.query('COMMIT')
     res.status(201).json({
       success: true,
-      venue_booking_id: bookingResult.rows[0].venue_booking_id,
       transaction_id: transactionId,
-      negotiated_price: finalPrice,
-      event_name: event_name, // ✅ ADD THIS
-      message: 'Venue booking created successfully'
+      total_amount: finalTotal,
+      message: 'Ticket booking created successfully'
     })  
     } catch (err) {
     await client.query('ROLLBACK')
@@ -675,7 +738,27 @@ app.patch('/api/bookings/ticket/:transactionId/cancel', async (req, res) => {
     const diffSeconds = (new Date().getTime() - new Date(tx.transaction_time).getTime()) / 1000
     if (diffSeconds > 120) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Cancellation window has expired (2 minutes)' }) }
     // Count exact quantity per ticket_id — this is the key fix
-    const ticketRows = await client.query(`SELECT ticket_id, COUNT(*) as qty FROM transaction_tickets WHERE transaction_id=$1 GROUP BY ticket_id`, [req.params.transactionId])
+    const ticketRows = await client.query(
+      `SELECT
+         tt.ticket_id,
+         GREATEST(
+           COALESCE(
+             SUM(
+               CASE
+                 WHEN t.face_value_price > 0 THEN ROUND(tt.price_paid / t.face_value_price)
+                 ELSE 1
+               END
+             ),
+             0
+           )::int,
+           1
+         ) AS qty
+       FROM transaction_tickets tt
+       JOIN tickets t ON t.ticket_id = tt.ticket_id
+       WHERE tt.transaction_id=$1
+       GROUP BY tt.ticket_id`,
+      [req.params.transactionId]
+    )
     for (const row of ticketRows.rows) {
       await client.query(`UPDATE tickets SET quantity_sold = GREATEST(quantity_sold - $1, 0) WHERE ticket_id = $2`, [parseInt(row.qty), row.ticket_id])
     }

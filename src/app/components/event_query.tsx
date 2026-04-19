@@ -561,10 +561,7 @@ export function EventQuery() {
                                   {isAttendee && event.status === 'scheduled' && event.tickets_available > 0 && (
                                     <>
                                       <Separator />
-                                      <div className="flex items-center justify-between">
-                                        <div className="text-sm text-muted-foreground">
-                                          <span className="font-medium text-foreground">{Number(event.tickets_available).toLocaleString()}</span> tickets available
-                                        </div>
+                                      <div className="flex items-center justify-end">
                                         <Button asChild>
                                           <Link to={`/${userType}/category/${category}/book-ticket/${event.event_id}`}>
                                             Book Tickets

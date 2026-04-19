@@ -114,10 +114,13 @@ Default URLs:
 |  |  |- components/
 |  |  \- routes.ts
 |  |- styles/
-|  \- main.tsx
+|  |- main.tsx
+|  \- App.tsx
 |- main.js
 |- package.json
-\- README.md
+|- postcss.config.mjs
+|- README.md
+\- vite.config.ts
 ```
 
 ## Authors
