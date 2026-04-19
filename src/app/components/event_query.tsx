@@ -582,18 +582,6 @@ export function EventQuery() {
                                       </div>
                                     </>
                                   )}
-                                  
-                                  {isOrganizer && event.status === 'scheduled' && (
-                                  <>
-                                    <Separator />
-                                    <VenueAvailabilityButton
-                                      eventId={event.event_id}
-                                      venueId={event.venue_id}
-                                      userType={userType}
-                                      category={category}
-                                    />
-                                  </>
-                                )}
  
                                 </div>
                               </div>
