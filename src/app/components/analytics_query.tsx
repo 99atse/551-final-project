@@ -62,7 +62,7 @@ interface VenueResult {
 interface EventSummary {
   event_count: number;
   avg_capacity: number;
-  avg_event_rating: number;
+  avg_event_rating: number | null;
   avg_ticket_price: number;
   avg_sell_through_pct: number;
   total_tickets_sold: number;
@@ -73,7 +73,7 @@ interface EventSummary {
 interface VenueSummary {
   total_venues: number;
   total_events: number;
-  avg_venue_rating: number;
+  avg_venue_rating: number | null;
   avg_sell_through_pct: number;
   total_tickets_sold: number;
   total_capacity: number;
@@ -125,7 +125,9 @@ function EventSummaryCards({ summary }: { summary: EventSummary }) {
             <Star className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">⭐ {Number(summary.avg_event_rating).toFixed(2)}</div>
+            <div className="text-2xl font-bold">
+              {summary.avg_event_rating === null ? "N/A" : `⭐ ${Number(summary.avg_event_rating).toFixed(2)}`}
+            </div>
             <p className="text-xs text-muted-foreground mt-1">Average event rating</p>
           </CardContent>
         </Card>
@@ -200,7 +202,9 @@ function VenueSummaryCards({ summary }: { summary: VenueSummary }) {
             <Star className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">⭐ {Number(summary.avg_venue_rating).toFixed(2)}</div>
+            <div className="text-2xl font-bold">
+              {summary.avg_venue_rating === null ? "N/A" : `⭐ ${Number(summary.avg_venue_rating).toFixed(2)}`}
+            </div>
             <p className="text-xs text-muted-foreground mt-1">Average venue rating</p>
           </CardContent>
         </Card>

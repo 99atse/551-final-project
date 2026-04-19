@@ -326,7 +326,7 @@ app.get('/api/analytics/summary', async (req, res) => {
     if (rows.length === 0) {
       return res.json({
         event_count: 0, total_tickets_sold: 0, total_capacity: 0,
-        total_revenue: 0, avg_sell_through_pct: 0, avg_event_rating: 0,
+        total_revenue: 0, avg_sell_through_pct: 0, avg_event_rating: null,
         avg_ticket_price: 0, avg_capacity: 0,
       })
     }
@@ -336,7 +336,13 @@ app.get('/api/analytics/summary', async (req, res) => {
       acc.total_tickets_sold += parseInt(row.total_tickets_sold || 0)
       acc.total_capacity     += parseInt(row.total_capacity || 0)
       acc.total_revenue      += parseFloat(row.avg_ticket_price || 0) * parseInt(row.total_tickets_sold || 0)
-      acc.ratings.push(parseFloat(row.avg_event_rating || 0))
+
+      // Ignore null/invalid ratings so they do not skew the overall average.
+      if (row.avg_event_rating !== null && row.avg_event_rating !== undefined) {
+        const parsedRating = parseFloat(row.avg_event_rating)
+        if (Number.isFinite(parsedRating)) acc.ratings.push(parsedRating)
+      }
+
       acc.ticket_prices.push(parseFloat(row.avg_ticket_price || 0))
       return acc
     }, { event_count: 0, total_tickets_sold: 0, total_capacity: 0, total_revenue: 0, ratings: [], ticket_prices: [] })
@@ -351,7 +357,7 @@ app.get('/api/analytics/summary', async (req, res) => {
                               : 0,
       avg_event_rating:     agg.ratings.length > 0
                               ? parseFloat((agg.ratings.reduce((a, b) => a + b, 0) / agg.ratings.length).toFixed(2))
-                              : 0,
+                              : null,
       avg_ticket_price:     agg.ticket_prices.length > 0
                               ? parseFloat((agg.ticket_prices.reduce((a, b) => a + b, 0) / agg.ticket_prices.length).toFixed(2))
                               : 0,
@@ -485,7 +491,13 @@ app.get('/api/analytics/venues/summary', async (req, res) => {
       acc.total_tickets_sold += parseInt(row.total_tickets_sold || 0)
       acc.total_capacity     += parseInt(row.total_capacity || 0)
       acc.total_revenue      += parseFloat(row.total_revenue || 0)
-      acc.ratings.push(parseFloat(row.venue_rating || 0))
+
+      // Ignore null/invalid ratings so they do not skew the overall average.
+      if (row.venue_rating !== null && row.venue_rating !== undefined) {
+        const parsedRating = parseFloat(row.venue_rating)
+        if (Number.isFinite(parsedRating)) acc.ratings.push(parsedRating)
+      }
+
       return acc
     }, { total_venues: 0, total_events: 0, total_tickets_sold: 0, total_capacity: 0, total_revenue: 0, ratings: [] })
 
@@ -497,7 +509,7 @@ app.get('/api/analytics/venues/summary', async (req, res) => {
       total_revenue:        parseFloat(agg.total_revenue.toFixed(2)),
       avg_venue_rating:     agg.ratings.length > 0
                               ? parseFloat((agg.ratings.reduce((a, b) => a + b, 0) / agg.ratings.length).toFixed(2))
-                              : 0,
+                              : null,
       avg_sell_through_pct: agg.total_capacity > 0
                               ? parseFloat(((agg.total_tickets_sold / agg.total_capacity) * 100).toFixed(1))
                               : 0,
