@@ -12,6 +12,7 @@ export function EventAnalytics() {
 
   const [analytics, setAnalytics] = useState<any>(null);
   const [tickets, setTickets] = useState<any[]>([]);
+  const [demographics, setDemographics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,14 +22,17 @@ export function EventAnalytics() {
 
     Promise.all([
       fetch(`/api/analytics/events/${eventId}`),
-      fetch(`/api/events/${eventId}/tickets`),
+      fetch(`/api/analytics/events/${eventId}/tickets`),
+      fetch(`/api/analytics/events/${eventId}/demographics`),
     ])
-      .then(async ([analyticsRes, ticketsRes]) => {
+      .then(async ([analyticsRes, ticketsRes, demoRes]) => {
         if (!analyticsRes.ok) throw new Error('Event not found');
         const analyticsData = await analyticsRes.json();
         const ticketsData = ticketsRes.ok ? await ticketsRes.json() : [];
+        const demoData = demoRes.ok ? await demoRes.json() : null;
         setAnalytics(analyticsData);
         setTickets(ticketsData);
+        setDemographics(demoData);
         setLoading(false);
       })
       .catch(err => {
@@ -60,6 +64,9 @@ export function EventAnalytics() {
   );
 
   const event = analytics.detail;
+
+  const totalDemoCount = (arr: any[]) =>
+    arr.reduce((sum, row) => sum + parseInt(row.count), 0);
 
   return (
     <div className="min-h-screen bg-background">
@@ -112,7 +119,6 @@ export function EventAnalytics() {
                     {event.start_time?.slice(0, 5)} - {event.end_time?.slice(0, 5)}
                   </p>
                 </div>
-
                 <div>
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <MapPin className="size-4" />
@@ -121,7 +127,6 @@ export function EventAnalytics() {
                   <p className="font-medium">{event.venue_name}</p>
                   <p className="text-sm text-muted-foreground">{event.city}, {event.state}</p>
                 </div>
-
                 <div>
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Users className="size-4" />
@@ -130,7 +135,6 @@ export function EventAnalytics() {
                   <p className="font-medium">{Number(event.capacity).toLocaleString()}</p>
                   <p className="text-sm text-muted-foreground">{event.venue_type}</p>
                 </div>
-
                 <div>
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Star className="size-4" />
@@ -142,9 +146,7 @@ export function EventAnalytics() {
                   <p className="text-sm text-muted-foreground">Event rating</p>
                 </div>
               </div>
-
               <Separator className="my-4" />
-
               <div>
                 <p className="text-sm text-muted-foreground mb-2">Description</p>
                 <p>{event.description}</p>
@@ -168,7 +170,6 @@ export function EventAnalytics() {
                   </p>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Sell-Through Rate</CardTitle>
@@ -181,7 +182,6 @@ export function EventAnalytics() {
                   </p>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Avg Ticket Price</CardTitle>
@@ -194,7 +194,6 @@ export function EventAnalytics() {
                   </p>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Tickets Available</CardTitle>
@@ -210,7 +209,7 @@ export function EventAnalytics() {
             </div>
           </div>
 
-          {/* Ticket Type Breakdown — from /api/events/:id/tickets */}
+          {/* Ticket Type Breakdown */}
           {tickets.length > 0 && (
             <Card className="mb-6">
               <CardHeader>
@@ -220,29 +219,31 @@ export function EventAnalytics() {
               <CardContent>
                 <div className="space-y-4">
                   {tickets.map((ticket: any, index: number) => {
-                    const sellThroughPct = ticket.quantity > 0
-                      ? ((ticket.quantity_sold / ticket.quantity) * 100).toFixed(1)
+                    const sellThroughPct = ticket.total_quantity > 0
+                      ? ((ticket.total_sold / ticket.total_quantity) * 100).toFixed(1)
                       : '0.0';
-                    const revenue = (ticket.quantity_sold * ticket.face_value_price).toLocaleString();
+                    const revenue = (ticket.total_sold * ticket.min_price).toLocaleString();
 
                     return (
-                      <div key={ticket.ticket_id}>
+                      <div key={ticket.type}>
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
                               <h3 className="font-medium">{ticket.type}</h3>
-                              <Badge variant="outline">${Number(ticket.face_value_price).toFixed(2)}</Badge>
-                              <Badge variant="secondary">{ticket.seat_location}</Badge>
+                              {ticket.min_price === ticket.max_price
+                                ? <Badge variant="outline">${Number(ticket.min_price).toFixed(2)}</Badge>
+                                : <Badge variant="outline">${Number(ticket.min_price).toFixed(2)} - ${Number(ticket.max_price).toFixed(2)}</Badge>
+                              }
                             </div>
                             <div className="flex gap-4 mt-2 text-sm flex-wrap">
                               <span className="text-muted-foreground">
-                                Sold: <span className="font-medium text-foreground">{Number(ticket.quantity_sold).toLocaleString()}</span>
+                                Sold: <span className="font-medium text-foreground">{Number(ticket.total_sold).toLocaleString()}</span>
                               </span>
                               <span className="text-muted-foreground">
-                                Available: <span className="font-medium text-foreground">{Number(ticket.quantity_available).toLocaleString()}</span>
+                                Available: <span className="font-medium text-foreground">{Number(ticket.total_available).toLocaleString()}</span>
                               </span>
                               <span className="text-muted-foreground">
-                                Total: <span className="font-medium text-foreground">{Number(ticket.quantity).toLocaleString()}</span>
+                                Total: <span className="font-medium text-foreground">{Number(ticket.total_quantity).toLocaleString()}</span>
                               </span>
                             </div>
                           </div>
@@ -252,19 +253,106 @@ export function EventAnalytics() {
                           </div>
                         </div>
                         <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                          <div
-                            className="bg-primary h-full transition-all"
-                            style={{ width: `${sellThroughPct}%` }}
-                          />
+                          <div className="bg-primary h-full transition-all" style={{ width: `${sellThroughPct}%` }} />
                         </div>
                         <div className="flex justify-between mt-1 text-xs text-muted-foreground">
                           <span>{sellThroughPct}% sold</span>
-                          <span>{Number(ticket.quantity_sold).toLocaleString()} / {Number(ticket.quantity).toLocaleString()} tickets</span>
+                          <span>{Number(ticket.total_sold).toLocaleString()} / {Number(ticket.total_quantity).toLocaleString()} tickets</span>
                         </div>
                         {index < tickets.length - 1 && <Separator className="mt-4" />}
                       </div>
                     );
                   })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Demographics */}
+          {demographics && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Attendee Demographics</CardTitle>
+                <CardDescription>Breakdown of ticket purchasers for this event</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+
+                  {/* Gender */}
+                  <div>
+                    <h3 className="text-sm font-medium mb-3">Gender</h3>
+                    <div className="space-y-2">
+                      {demographics.gender.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No data available</p>
+                      ) : demographics.gender.map((row: any) => {
+                        const pct = totalDemoCount(demographics.gender) > 0
+                          ? ((parseInt(row.count) / totalDemoCount(demographics.gender)) * 100).toFixed(1)
+                          : '0';
+                        return (
+                          <div key={row.gender}>
+                            <div className="flex justify-between text-sm mb-1">
+                              <span className="text-muted-foreground capitalize">{row.gender}</span>
+                              <span className="font-medium">{pct}% <span className="text-muted-foreground font-normal">({Number(row.count).toLocaleString()})</span></span>
+                            </div>
+                            <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                              <div className="bg-primary h-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Age */}
+                  <div>
+                    <h3 className="text-sm font-medium mb-3">Age Group</h3>
+                    <div className="space-y-2">
+                      {demographics.age.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No data available</p>
+                      ) : demographics.age.map((row: any) => {
+                        const pct = totalDemoCount(demographics.age) > 0
+                          ? ((parseInt(row.count) / totalDemoCount(demographics.age)) * 100).toFixed(1)
+                          : '0';
+                        return (
+                          <div key={row.age_group}>
+                            <div className="flex justify-between text-sm mb-1">
+                              <span className="text-muted-foreground">{row.age_group}</span>
+                              <span className="font-medium">{pct}% <span className="text-muted-foreground font-normal">({Number(row.count).toLocaleString()})</span></span>
+                            </div>
+                            <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                              <div className="bg-primary h-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Race */}
+                  <div>
+                    <h3 className="text-sm font-medium mb-3">Race / Ethnicity</h3>
+                    <div className="space-y-2">
+                      {demographics.race.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No data available</p>
+                      ) : demographics.race.map((row: any) => {
+                        const pct = totalDemoCount(demographics.race) > 0
+                          ? ((parseInt(row.count) / totalDemoCount(demographics.race)) * 100).toFixed(1)
+                          : '0';
+                        return (
+                          <div key={row.race}>
+                            <div className="flex justify-between text-sm mb-1">
+                              <span className="text-muted-foreground">{row.race}</span>
+                              <span className="font-medium">{pct}% <span className="text-muted-foreground font-normal">({Number(row.count).toLocaleString()})</span></span>
+                            </div>
+                            <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                              <div className="bg-primary h-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                 </div>
               </CardContent>
             </Card>
@@ -304,14 +392,14 @@ export function EventAnalytics() {
                     <span className="text-sm text-muted-foreground">Venue Rating</span>
                     <p className="font-medium">⭐ {Number(event.venue_rating).toFixed(1)}</p>
                   </div>
-                  <div className="mt-4 flex justify-end">
-                    <Button asChild variant="outline">
-                      <Link to={`/${userType}/category/${category}/analytics/venue/${event.venue_id}`}>
-                        View Venue Analytics
-                      </Link>
-                    </Button>
-                  </div>
                 </div>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <Button asChild variant="outline">
+                  <Link to={`/${userType}/category/${category}/analytics/venue/${event.venue_id}`}>
+                    View Venue Analytics
+                  </Link>
+                </Button>
               </div>
             </CardContent>
           </Card>

@@ -78,19 +78,30 @@ SELECT
   v.max_capacity,
   v.base_rental_rate,
   v.rating                              AS venue_rating,
-  COUNT(e.event_id)                     AS total_events,
+  COUNT(DISTINCT e.event_id)            AS total_events,
   ROUND(AVG(e.rating), 2)              AS avg_event_rating,
-  ROUND(AVG(e.capacity), 0)::INT       AS avg_event_capacity,
-  SUM(t.quantity_sold)                  AS total_tickets_sold,
+  COALESCE(SUM(t_agg.total_sold), 0)   AS total_tickets_sold,
   SUM(e.capacity)                       AS total_capacity,
   ROUND(
-    SUM(t.quantity_sold)::numeric / NULLIF(SUM(e.capacity), 0) * 100, 1
+    COALESCE(SUM(t_agg.total_sold), 0)::numeric / NULLIF(SUM(e.capacity), 0) * 100, 1
   )                                     AS avg_sell_through_pct,
-  ROUND(AVG(t.face_value_price), 2)    AS avg_ticket_price,
-  ROUND(SUM(t.quantity_sold * t.face_value_price), 2) AS total_revenue
+  ROUND(AVG(t_agg.avg_price), 2)       AS avg_ticket_price,
+  ROUND(SUM(t_agg.total_revenue), 2)   AS total_revenue,
+  ROUND(MIN(t_agg.min_price), 2)       AS min_ticket_price,
+  ROUND(MAX(t_agg.max_price), 2)       AS max_ticket_price
 FROM venues v
 LEFT JOIN events e ON v.venue_id = e.venue_id
-LEFT JOIN tickets t ON e.event_id = t.event_id
+LEFT JOIN (
+  SELECT
+    event_id,
+    AVG(face_value_price)                  AS avg_price,
+    MIN(face_value_price)                  AS min_price,
+    MAX(face_value_price)                  AS max_price,
+    SUM(quantity_sold)                     AS total_sold,
+    SUM(quantity_sold * face_value_price)  AS total_revenue
+  FROM tickets
+  GROUP BY event_id
+) t_agg ON t_agg.event_id = e.event_id
 GROUP BY v.venue_id;
 
 -- Venue detail view (regular view)

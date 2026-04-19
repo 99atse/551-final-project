@@ -365,6 +365,83 @@ app.get('/api/analytics/summary', async (req, res) => {
   }
 })
 
+app.get('/api/analytics/events/:id/demographics', async (req, res) => {
+  try {
+    const [genderResult, ageResult, raceResult] = await Promise.all([
+      pool.query(
+        `SELECT c.gender, COUNT(*) as count
+         FROM customers c
+         JOIN transactions tx ON c.customer_id = tx.customer_id
+         JOIN transaction_tickets tt ON tx.transaction_id = tt.transaction_id
+         JOIN tickets t ON tt.ticket_id = t.ticket_id
+         WHERE t.event_id = $1 AND c.gender IS NOT NULL
+         GROUP BY c.gender ORDER BY count DESC`,
+        [req.params.id]
+      ),
+      pool.query(
+        `SELECT
+           CASE
+             WHEN c.age < 18 THEN 'Under 18'
+             WHEN c.age BETWEEN 18 AND 24 THEN '18-24'
+             WHEN c.age BETWEEN 25 AND 34 THEN '25-34'
+             WHEN c.age BETWEEN 35 AND 44 THEN '35-44'
+             WHEN c.age BETWEEN 45 AND 54 THEN '45-54'
+             WHEN c.age >= 55 THEN '55+'
+           END as age_group,
+           COUNT(*) as count
+         FROM customers c
+         JOIN transactions tx ON c.customer_id = tx.customer_id
+         JOIN transaction_tickets tt ON tx.transaction_id = tt.transaction_id
+         JOIN tickets t ON tt.ticket_id = t.ticket_id
+         WHERE t.event_id = $1 AND c.age IS NOT NULL
+         GROUP BY age_group ORDER BY age_group`,
+        [req.params.id]
+      ),
+      pool.query(
+        `SELECT c.race, COUNT(*) as count
+         FROM customers c
+         JOIN transactions tx ON c.customer_id = tx.customer_id
+         JOIN transaction_tickets tt ON tx.transaction_id = tt.transaction_id
+         JOIN tickets t ON tt.ticket_id = t.ticket_id
+         WHERE t.event_id = $1 AND c.race IS NOT NULL
+         GROUP BY c.race ORDER BY count DESC`,
+        [req.params.id]
+      )
+    ])
+    res.json({
+      gender: genderResult.rows,
+      age:    ageResult.rows,
+      race:   raceResult.rows,
+    })
+  } catch (err) {
+    console.error('Error fetching demographics:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/analytics/events/:id/tickets', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+        type,
+        MIN(face_value_price)        AS min_price,
+        MAX(face_value_price)        AS max_price,
+        SUM(quantity)                AS total_quantity,
+        SUM(quantity_sold)           AS total_sold,
+        SUM(quantity - quantity_sold) AS total_available
+       FROM tickets
+       WHERE event_id = $1
+       GROUP BY type
+       ORDER BY min_price ASC`,
+      [req.params.id]
+    )
+    res.json(rows)
+  } catch (err) {
+    console.error('Error fetching analytics tickets:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 app.get('/api/analytics/events/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -380,7 +457,7 @@ app.get('/api/analytics/events/:id', async (req, res) => {
 })
 
 app.get('/api/analytics/venues/summary', async (req, res) => {
-  const { city, state, venueType, type } = req.query
+  const { city, state, venueType, type, minTotalEvents, minSellThrough, minTotalRevenue } = req.query
   try {
     const params = []
     let query = `SELECT * FROM venue_analytics_summary WHERE true`
@@ -389,13 +466,16 @@ app.get('/api/analytics/venues/summary', async (req, res) => {
     if (state)     { params.push(state);             query += ` AND state = $${params.length}` }
     if (venueType) { params.push(`%${venueType}%`);  query += ` AND venue_type ILIKE $${params.length}` }
 
-    // scope to venues that have hosted this event category
     if (type) {
       params.push(type)
       query += ` AND venue_id IN (
         SELECT DISTINCT venue_id FROM events WHERE type = $${params.length}
       )`
     }
+
+    if (minTotalEvents)  { params.push(parseInt(minTotalEvents));    query += ` AND total_events >= $${params.length}` }
+    if (minSellThrough)  { params.push(parseFloat(minSellThrough));  query += ` AND avg_sell_through_pct >= $${params.length}` }
+    if (minTotalRevenue) { params.push(parseFloat(minTotalRevenue)); query += ` AND total_revenue >= $${params.length}` }
 
     const { rows } = await pool.query(query, params)
 

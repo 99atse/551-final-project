@@ -248,6 +248,7 @@ export function AnalyticsQuery() {
   const [venueFilters, setVenueFilters] = useState({
     city: "", state: "", venueType: "", minCapacity: "", maxCapacity: "",
     minRentalRate: "", maxRentalRate: "", minVenueRating: "",
+    minTotalEvents: "", minSellThrough: "", minTotalRevenue: "",
   });
 
   const [eventResults, setEventResults] = useState<Event[]>([]);
@@ -283,7 +284,6 @@ export function AnalyticsQuery() {
       params.append("status", eventFilters.eventStatus);
     }
 
-    // Summary only uses discrete filters the materialized view supports
     const summaryParams = new URLSearchParams();
     summaryParams.append("type", categoryName);
     if (eventFilters.state)     summaryParams.append("state", eventFilters.state);
@@ -324,14 +324,17 @@ export function AnalyticsQuery() {
 
     const params = new URLSearchParams();
     params.append("type", categoryName);
-    if (venueFilters.city)           params.append("city", venueFilters.city);
-    if (venueFilters.state)          params.append("state", venueFilters.state);
-    if (venueFilters.venueType)      params.append("venueType", venueFilters.venueType);
-    if (venueFilters.minCapacity)    params.append("minCapacity", venueFilters.minCapacity);
-    if (venueFilters.maxCapacity)    params.append("maxCapacity", venueFilters.maxCapacity);
-    if (venueFilters.minRentalRate)  params.append("minRentalRate", venueFilters.minRentalRate);
-    if (venueFilters.maxRentalRate)  params.append("maxRentalRate", venueFilters.maxRentalRate);
-    if (venueFilters.minVenueRating) params.append("minVenueRating", venueFilters.minVenueRating);
+    if (venueFilters.city)            params.append("city", venueFilters.city);
+    if (venueFilters.state)           params.append("state", venueFilters.state);
+    if (venueFilters.venueType)       params.append("venueType", venueFilters.venueType);
+    if (venueFilters.minCapacity)     params.append("minCapacity", venueFilters.minCapacity);
+    if (venueFilters.maxCapacity)     params.append("maxCapacity", venueFilters.maxCapacity);
+    if (venueFilters.minRentalRate)   params.append("minRentalRate", venueFilters.minRentalRate);
+    if (venueFilters.maxRentalRate)   params.append("maxRentalRate", venueFilters.maxRentalRate);
+    if (venueFilters.minVenueRating)  params.append("minVenueRating", venueFilters.minVenueRating);
+    if (venueFilters.minTotalEvents)  params.append("minTotalEvents", venueFilters.minTotalEvents);
+    if (venueFilters.minSellThrough)  params.append("minSellThrough", venueFilters.minSellThrough);
+    if (venueFilters.minTotalRevenue) params.append("minTotalRevenue", venueFilters.minTotalRevenue);
 
     generateVenueSQL(params);
 
@@ -352,40 +355,28 @@ export function AnalyticsQuery() {
   // ── SQL generators ─────────────────────────────────────
 
   const generateEventSQL = (params: URLSearchParams) => {
-    let summarySQL = `-- Analytics Summary (materialized view)\nSELECT * FROM event_analytics_summary\nWHERE type = '${params.get("type")}'`;
-    if (params.get("status"))    summarySQL += `\n  AND status = '${params.get("status")}'`;
-    if (params.get("city"))      summarySQL += `\n  AND city ILIKE '%${params.get("city")}%'`;
-    if (params.get("state"))     summarySQL += `\n  AND state = '${params.get("state")}'`;
-    if (params.get("venueType")) summarySQL += `\n  AND venue_type ILIKE '%${params.get("venueType")}%'`;
-    summarySQL += `;`;
-
-    let eventsSQL = `\n\n-- Event Results\nSELECT e.*, v.name as venue_name, v.city, v.state,\n       v.venue_type, v.rating as venue_rating,\n       SUM(t.quantity_sold) as tickets_sold\nFROM events e\nJOIN venues v ON e.venue_id = v.venue_id\nLEFT JOIN tickets t ON e.event_id = t.event_id\nWHERE e.type = '${params.get("type")}'`;
-    if (params.get("status"))         eventsSQL += `\n  AND e.status = '${params.get("status")}'`;
-    if (params.get("search"))         eventsSQL += `\n  AND (e.name ILIKE '%${params.get("search")}%' OR v.name ILIKE '%${params.get("search")}%')`;
-    if (params.get("dateFrom"))       eventsSQL += `\n  AND lower(e.event_time_range)::date >= '${params.get("dateFrom")}'`;
-    if (params.get("dateTo"))         eventsSQL += `\n  AND lower(e.event_time_range)::date <= '${params.get("dateTo")}'`;
-    if (params.get("city"))           eventsSQL += `\n  AND v.city ILIKE '%${params.get("city")}%'`;
-    if (params.get("state"))          eventsSQL += `\n  AND v.state = '${params.get("state")}'`;
-    if (params.get("venueType"))      eventsSQL += `\n  AND v.venue_type ILIKE '%${params.get("venueType")}%'`;
-    if (params.get("minCapacity"))    eventsSQL += `\n  AND e.capacity >= ${params.get("minCapacity")}`;
-    if (params.get("maxCapacity"))    eventsSQL += `\n  AND e.capacity <= ${params.get("maxCapacity")}`;
-    if (params.get("minEventRating")) eventsSQL += `\n  AND e.rating >= ${params.get("minEventRating")}`;
-    if (params.get("minVenueRating")) eventsSQL += `\n  AND v.rating >= ${params.get("minVenueRating")}`;
-    eventsSQL += `\nGROUP BY e.event_id, v.venue_id\nORDER BY lower(e.event_time_range) ASC;`;
-
-    setGeneratedSQL(summarySQL + eventsSQL);
+    let sql = `-- Analytics Summary (materialized view)\nSELECT * FROM event_analytics_summary\nWHERE type = '${params.get("type")}'`;
+    if (params.get("status"))    sql += `\n  AND status = '${params.get("status")}'`;
+    if (params.get("city"))      sql += `\n  AND city ILIKE '%${params.get("city")}%'`;
+    if (params.get("state"))     sql += `\n  AND state = '${params.get("state")}'`;
+    if (params.get("venueType")) sql += `\n  AND venue_type ILIKE '%${params.get("venueType")}%'`;
+    sql += `;`;
+    setGeneratedSQL(sql);
   };
 
   const generateVenueSQL = (params: URLSearchParams) => {
     let sql = `SELECT * FROM venue_analytics_summary\nWHERE venue_id IN (\n  SELECT DISTINCT venue_id FROM events WHERE type = '${params.get("type")}'\n)`;
-    if (params.get("city"))           sql += `\n  AND city ILIKE '%${params.get("city")}%'`;
-    if (params.get("state"))          sql += `\n  AND state = '${params.get("state")}'`;
-    if (params.get("venueType"))      sql += `\n  AND venue_type ILIKE '%${params.get("venueType")}%'`;
-    if (params.get("minCapacity"))    sql += `\n  AND max_capacity >= ${params.get("minCapacity")}`;
-    if (params.get("maxCapacity"))    sql += `\n  AND max_capacity <= ${params.get("maxCapacity")}`;
-    if (params.get("minRentalRate"))  sql += `\n  AND base_rental_rate >= ${params.get("minRentalRate")}`;
-    if (params.get("maxRentalRate"))  sql += `\n  AND base_rental_rate <= ${params.get("maxRentalRate")}`;
-    if (params.get("minVenueRating")) sql += `\n  AND venue_rating >= ${params.get("minVenueRating")}`;
+    if (params.get("city"))            sql += `\n  AND city ILIKE '%${params.get("city")}%'`;
+    if (params.get("state"))           sql += `\n  AND state = '${params.get("state")}'`;
+    if (params.get("venueType"))       sql += `\n  AND venue_type ILIKE '%${params.get("venueType")}%'`;
+    if (params.get("minCapacity"))     sql += `\n  AND max_capacity >= ${params.get("minCapacity")}`;
+    if (params.get("maxCapacity"))     sql += `\n  AND max_capacity <= ${params.get("maxCapacity")}`;
+    if (params.get("minRentalRate"))   sql += `\n  AND base_rental_rate >= ${params.get("minRentalRate")}`;
+    if (params.get("maxRentalRate"))   sql += `\n  AND base_rental_rate <= ${params.get("maxRentalRate")}`;
+    if (params.get("minVenueRating"))  sql += `\n  AND venue_rating >= ${params.get("minVenueRating")}`;
+    if (params.get("minTotalEvents"))  sql += `\n  AND total_events >= ${params.get("minTotalEvents")}`;
+    if (params.get("minSellThrough"))  sql += `\n  AND avg_sell_through_pct >= ${params.get("minSellThrough")}`;
+    if (params.get("minTotalRevenue")) sql += `\n  AND total_revenue >= ${params.get("minTotalRevenue")}`;
     sql += `\nORDER BY total_revenue DESC;`;
     setGeneratedSQL(sql);
   };
@@ -401,6 +392,7 @@ export function AnalyticsQuery() {
     setVenueFilters({
       city: "", state: "", venueType: "", minCapacity: "", maxCapacity: "",
       minRentalRate: "", maxRentalRate: "", minVenueRating: "",
+      minTotalEvents: "", minSellThrough: "", minTotalRevenue: "",
     });
     setEventResults([]);
     setVenueResults([]);
@@ -597,6 +589,20 @@ export function AnalyticsQuery() {
                       <div>
                         <Label>Min Venue Rating</Label>
                         <Input type="number" placeholder="0" min="0" max="5" step="0.1" value={venueFilters.minVenueRating} onChange={(e) => setVenueFilters({ ...venueFilters, minVenueRating: e.target.value })} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label>Min Events Hosted</Label>
+                          <Input type="number" placeholder="0" value={venueFilters.minTotalEvents} onChange={(e) => setVenueFilters({ ...venueFilters, minTotalEvents: e.target.value })} />
+                        </div>
+                        <div>
+                          <Label>Min Sell-Through (%)</Label>
+                          <Input type="number" placeholder="0" min="0" max="100" step="1" value={venueFilters.minSellThrough} onChange={(e) => setVenueFilters({ ...venueFilters, minSellThrough: e.target.value })} />
+                        </div>
+                      </div>
+                      <div>
+                        <Label>Min Total Revenue ($)</Label>
+                        <Input type="number" placeholder="0" value={venueFilters.minTotalRevenue} onChange={(e) => setVenueFilters({ ...venueFilters, minTotalRevenue: e.target.value })} />
                       </div>
                     </>
                   )}
