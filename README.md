@@ -1,6 +1,6 @@
 # 551 Final Project: Event Management System
 
-An Event Management web application built for DSCI 551.
+An Event Management web application built for DSCI 551 Spring 2026.
 The project combines a React + Vite frontend, an Express API server, and a PostgreSQL database.
 
 ## Overview
@@ -29,59 +29,57 @@ Before running the project, make sure the following are installed:
 
 1. Clone the repository:
 
-	```bash
-	git clone https://github.com/99atse/551-final-project.git
-	cd 551-final-project
-	```
-
+   ```bash
+   git clone https://github.com/99atse/551-final-project.git
+   cd 551-final-project
+   ```
 2. Install dependencies:
 
-	```bash
-	npm install
-	```
+   ```bash
+   npm install
+   ```
+3. Create and configure environment variables (OPTIONAL):
 
-3. Create and configure environment variables:
+   Create a `.env` file in the project root with:
 
-	Create a `.env` file in the project root with:
+   ```env
+   DB_HOST=localhost
+   DB_USER=postgres
+   DB_PORT=5432
+   DB_PASSWORD=your_password
+   DB_NAME=event_db
+   PORT=3000
+   ```
 
-	```env
-	DB_HOST=localhost
-	DB_USER=postgres
-	DB_PORT=5432
-	DB_PASSWORD=your_password
-	DB_NAME=event_db
-	PORT=3000
-	```
+   Notes:
 
-	Notes:
-	- If `.env` is not provided, the server falls back to defaults in `main.js`.
-	- Update the values so they match your local PostgreSQL configuration.
+   - If `.env` is not provided, the server falls back to defaults in `main.js`.
+   - Update the values so they match your local PostgreSQL configuration.
 
 ## Database Setup
 
+For the database, set it up in a database management tool for PostgreSQL databases, such as DBeaver, PGAdmin 4, or follow the commands below in your terminal.
+
 1. Create the database:
 
-	```bash
-	createdb event_db
-	```
-
+   ```bash
+   createdb event_db
+   ```
 2. Apply schema:
 
-	```bash
-	psql -d event_db -f database/schema.sql
-	```
-
+   ```bash
+   psql -d event_db -f database/schema.sql
+   ```
 3. Seed data:
 
-	```bash
-	psql -d event_db -f database/seed.sql
-	```
-
+   ```bash
+   psql -d event_db -f database/seed.sql
+   ```
 4. Optional: create analytics views:
 
-	```bash
-	psql -d event_db -f database/views.sql
-	```
+   ```bash
+   psql -d event_db -f database/views.sql
+   ```
 
 ## Running the App
 
