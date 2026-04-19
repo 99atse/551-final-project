@@ -115,6 +115,13 @@ function ConfirmationModal({ result, onClose }: { result: BookingResult; onClose
 
 export function BookingVenue() {
   const { venueId, userType, category } = useParams<{ venueId: string; userType: string; category: string }>();
+  const CATEGORY_LABEL_MAP: Record<string, string> = {
+    'concerts-festivals': 'Concerts/Festivals',
+    'sporting-events': 'Sporting Events',
+    'weddings': 'Weddings',
+    'conventions': 'Conventions',
+    'conferences': 'Conferences',
+  };
   const location = useLocation();
   const navigate = useNavigate();
   const [venue, setVenue] = useState<Venue | null>(null);
@@ -219,6 +226,7 @@ export function BookingVenue() {
     }
     setIsSubmitting(true); setError('');
     try {
+      const categoryLabel = category ? (CATEGORY_LABEL_MAP[category] || category) : 'Venue Booking';
       const response = await fetch('/api/bookings/venue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -237,7 +245,7 @@ export function BookingVenue() {
           billing_address: `${bookingData.address}, ${bookingData.city}, ${bookingData.state} ${bookingData.zipcode}`,
           event_start: selectedTimeSlot.start,
           event_end: selectedTimeSlot.end,
-          event_type: category || 'venue booking',
+          event_type: categoryLabel,
         }),
       });
       const result = await response.json();

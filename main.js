@@ -693,7 +693,19 @@ app.post('/api/bookings/venue', async (req, res) => {
     const conflictCheck = await client.query(`SELECT venue_id FROM venue_availability WHERE venue_id=$1 AND status IN ('booked','maintenance') AND booking_time_range && $2::tsrange`, [venue_id, event_time_range])
     if (conflictCheck.rows.length > 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Venue already booked for this time slot' }) }
 
-    const normalizedEventType = (event_type || 'venue booking').toString().replace(/-/g, ' ').trim()
+    const EVENT_TYPE_MAP = {
+      'concerts-festivals': 'Concerts/Festivals',
+      'sporting-events': 'Sporting Events',
+      'weddings': 'Weddings',
+      'conventions': 'Conventions',
+      'conferences': 'Conferences',
+    }
+    const rawEventType = (event_type || 'venue booking').toString().trim()
+    const normalizedTypeKey = rawEventType
+      .toLowerCase()
+      .replace(/[\s/]+/g, '-')
+      .replace(/-+/g, '-')
+    const normalizedEventType = EVENT_TYPE_MAP[normalizedTypeKey] || rawEventType
     const eventInsert = await client.query(
       `INSERT INTO events (name, venue_id, event_time_range, capacity, type, status, is_sold_out, description)
        VALUES ($1, $2, $3::tsrange, $4, $5, 'scheduled', FALSE, $6)
@@ -701,6 +713,13 @@ app.post('/api/bookings/venue', async (req, res) => {
       [event_name, venue_id, event_time_range, max_capacity, normalizedEventType, event_description || null]
     )
     const event_id = eventInsert.rows[0].event_id
+
+    // Seed a GA ticket pool so tickets_available reflects venue capacity for new venue bookings.
+    await client.query(
+      `INSERT INTO tickets (event_id, type, status, seat_location, face_value_price, quantity, quantity_sold)
+       VALUES ($1, 'General Admission', 'available', 'GA', 0, $2, 0)`,
+      [event_id, max_capacity]
+    )
 
     let customerId
     const existingCustomer = await client.query(`SELECT customer_id FROM customers WHERE contact_email = $1`, [contact_email])
