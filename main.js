@@ -712,9 +712,9 @@ app.post('/api/bookings/venue', async (req, res) => {
       customerId = r.rows[0].customer_id
     }
     const finalPrice = negotiated_price || base_rental_rate
-    const txResult = await client.query(`INSERT INTO transactions (customer_id,type,status) VALUES ($1,'booker','pending') RETURNING transaction_id`, [customerId])
+    const txResult = await client.query(`INSERT INTO transactions (customer_id,type,status) VALUES ($1,'booker','confirmed') RETURNING transaction_id`, [customerId])
     const transactionId = txResult.rows[0].transaction_id
-    const bookingResult = await client.query(`INSERT INTO venue_bookings (event_id,venue_id,customer_id,transaction_id,negotiated_price,status) VALUES ($1,$2,$3,$4,$5,'pending') RETURNING venue_booking_id`, [event_id, venue_id, customerId, transactionId, finalPrice])
+    const bookingResult = await client.query(`INSERT INTO venue_bookings (event_id,venue_id,customer_id,transaction_id,negotiated_price,status) VALUES ($1,$2,$3,$4,$5,'confirmed') RETURNING venue_booking_id`, [event_id, venue_id, customerId, transactionId, finalPrice])
 
     const availabilityUpdate = await client.query(
       `UPDATE venue_availability
@@ -728,7 +728,7 @@ app.post('/api/bookings/venue', async (req, res) => {
       return res.status(409).json({ error: 'Selected venue slot is no longer available' })
     }
 
-    await client.query(`INSERT INTO payments (transaction_id,payment_type,payment_status,card_last_4,total_amount,billing_address) VALUES ($1,$2,'pending',$3,$4,$5)`, [transactionId, payment_type, card_last_4||null, finalPrice, billing_address||null])
+    await client.query(`INSERT INTO payments (transaction_id,payment_type,payment_status,card_last_4,total_amount,billing_address) VALUES ($1,$2,'completed',$3,$4,$5)`, [transactionId, payment_type, card_last_4||null, finalPrice, billing_address||null])
     await client.query('COMMIT')
     res.status(201).json({ success: true, venue_booking_id: bookingResult.rows[0].venue_booking_id, transaction_id: transactionId, negotiated_price: finalPrice, event_name: event_name, message: 'Venue booking created successfully' })
   } catch (err) {
