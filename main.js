@@ -150,18 +150,10 @@ app.get('/api/events/:id/tickets', async (req, res) => {
 
 // ── Venues ────────────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════
-// FIX 1: Replace your GET /api/venues route in main.js
-// It now joins venue_availability so each available slot = 1 row,
-// and supports the bookingTime filter using TSRANGE overlap (&&)
-// ═══════════════════════════════════════════════════════════
-
 app.get('/api/venues', async (req, res) => {
   const { search, city, state, venueType, minCapacity, maxCapacity, minRentalRate, maxRentalRate, minVenueRating, bookingTimeRange } = req.query
   try {
     const params = []
-    // JOIN venue_availability so each available time slot produces a separate row.
-    // This is what lets the same venue appear twice if it has two available slots.
     let query = `
       SELECT
         v.venue_id,
@@ -195,25 +187,18 @@ app.get('/api/venues', async (req, res) => {
     if (maxRentalRate) { params.push(parseFloat(maxRentalRate)); query += ` AND v.base_rental_rate <= $${params.length}` }
     if (minVenueRating){ params.push(parseFloat(minVenueRating)); query += ` AND v.rating >= $${params.length}` }
 
-    // Time filter: user inputs a time like "16:00" and we find all slots
-    // whose booking_time_range overlaps a 1-minute window at that time.
-    // e.g. a venue available 15:00–17:00 will match a search for "16:00"
-    // because [16:00, 16:01) && [15:00, 17:00) is true.
     if (bookingTimeRange) {
-      // Parse the time input — accept HH:MM or HH:MM-HH:MM formats
       const timeStr = bookingTimeRange.trim()
       const rangeMatch = timeStr.match(/^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/)
       const singleMatch = timeStr.match(/^(\d{1,2}:\d{2})$/)
 
       if (rangeMatch) {
-        // User typed a range like "14:00-18:00" — use it directly as a TSRANGE
         const today = new Date().toISOString().split('T')[0]
         const tsFrom = `${today} ${rangeMatch[1]}`
         const tsTo   = `${today} ${rangeMatch[2]}`
         params.push(`[${tsFrom}, ${tsTo})`)
         query += ` AND va.booking_time_range && $${params.length}::tsrange`
       } else if (singleMatch) {
-        // User typed a single time like "16:00" — find any slot containing that moment
         const today = new Date().toISOString().split('T')[0]
         const tsPoint = `${today} ${singleMatch[1]}`
         params.push(`[${tsPoint}, ${tsPoint}]`)
@@ -221,7 +206,6 @@ app.get('/api/venues', async (req, res) => {
       }
     }
 
-    // Group by both venue AND the specific availability slot so each slot is its own row
     query += `
       GROUP BY
         v.venue_id, v.name, v.city, v.state, v.venue_type,
@@ -305,7 +289,7 @@ app.get('/api/venues/:venueId/availability', async (req, res) => {
   }
 })
 
-// ── Analyst ───────────────────────────────────────────────
+// ── Analytics ─────────────────────────────────────────────
 
 app.get('/api/analytics/summary', async (req, res) => {
   const { type, status, city, state, venueType } = req.query
@@ -314,7 +298,6 @@ app.get('/api/analytics/summary', async (req, res) => {
     const params = []
     let query = `SELECT * FROM event_analytics_summary WHERE true`
 
-    // type must be first and exact match
     if (type)      { params.push(type);            query += ` AND type = $${params.length}` }
     if (status)    { params.push(status);           query += ` AND status = $${params.length}::event_status` }
     if (city)      { params.push(`%${city}%`);      query += ` AND city ILIKE $${params.length}` }
@@ -492,7 +475,6 @@ app.get('/api/analytics/venues/summary', async (req, res) => {
       acc.total_capacity     += parseInt(row.total_capacity || 0)
       acc.total_revenue      += parseFloat(row.total_revenue || 0)
 
-      // Ignore null/invalid ratings so they do not skew the overall average.
       if (row.venue_rating !== null && row.venue_rating !== undefined) {
         const parsedRating = parseFloat(row.venue_rating)
         if (Number.isFinite(parsedRating)) acc.ratings.push(parsedRating)
@@ -662,8 +644,8 @@ app.post('/api/bookings/ticket', async (req, res) => {
       transaction_id: transactionId,
       total_amount: finalTotal,
       message: 'Ticket booking created successfully'
-    })  
-    } catch (err) {
+    })
+  } catch (err) {
     await client.query('ROLLBACK')
     console.error('Ticket booking error:', err)
     res.status(500).json({ error: 'Failed to create booking: ' + err.message })
@@ -714,11 +696,44 @@ app.post('/api/bookings/venue', async (req, res) => {
     )
     const event_id = eventInsert.rows[0].event_id
 
-    // Seed a GA ticket pool so tickets_available reflects venue capacity for new venue bookings.
+    // ── Seed GA / VIP / Premium ticket pools ──────────────
+    const gaQty      = Math.floor(max_capacity * 0.60)
+    const vipQty     = Math.floor(max_capacity * 0.25)
+    const premiumQty = max_capacity - gaQty - vipQty  // remainder avoids rounding loss
+
+    const eventTypeLower = normalizedEventType.toLowerCase()
+    const isWedding    = eventTypeLower.includes('wedding')
+    const isConference = eventTypeLower.includes('conference')
+    const isSporting   = eventTypeLower.includes('sporting')
+
+    let gaPrice, vipPrice, premiumPrice
+    if (isWedding) {
+      // Weddings are invitation-based — no face value
+      gaPrice = 0; vipPrice = 0; premiumPrice = 0
+    } else if (isConference) {
+      // Conferences: higher per-seat cost basis (~8× cost-per-seat)
+      gaPrice      = Math.round(Number(base_rental_rate) / max_capacity * 8)
+      vipPrice     = Math.round(gaPrice * 2.5)
+      premiumPrice = Math.round(gaPrice * 5)
+    } else if (isSporting) {
+      // Sporting events: steeper premium/VIP uplift
+      gaPrice      = Math.round(Number(base_rental_rate) / max_capacity * 6)
+      vipPrice     = Math.round(gaPrice * 3.5)
+      premiumPrice = Math.round(gaPrice * 12)
+    } else {
+      // Concerts, Conventions, and everything else
+      gaPrice      = Math.round(Number(base_rental_rate) / max_capacity * 5)
+      vipPrice     = Math.round(gaPrice * 2.5)
+      premiumPrice = Math.round(gaPrice * 5)
+    }
+
     await client.query(
       `INSERT INTO tickets (event_id, type, status, seat_location, face_value_price, quantity, quantity_sold)
-       VALUES ($1, 'General Admission', 'available', 'GA', 0, $2, 0)`,
-      [event_id, max_capacity]
+       VALUES
+         ($1, 'General Admission', 'available', 'GA',      $2, $3, 0),
+         ($1, 'VIP',               'available', 'VIP',     $4, $5, 0),
+         ($1, 'Premium',           'available', 'Premium', $6, $7, 0)`,
+      [event_id, gaPrice, gaQty, vipPrice, vipQty, premiumPrice, premiumQty]
     )
 
     let customerId
@@ -768,7 +783,6 @@ app.patch('/api/bookings/ticket/:transactionId/cancel', async (req, res) => {
     if (tx.status === 'cancelled') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Booking is already cancelled' }) }
     const diffSeconds = (new Date().getTime() - new Date(tx.transaction_time).getTime()) / 1000
     if (diffSeconds > 120) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Cancellation window has expired (2 minutes)' }) }
-    // Count exact quantity per ticket_id — this is the key fix
     const ticketRows = await client.query(
       `SELECT
          tt.ticket_id,
@@ -824,8 +838,6 @@ app.patch('/api/bookings/venue/:venueBookingId/cancel', async (req, res) => {
     const diffSeconds = (new Date().getTime() - new Date(booking.transaction_time).getTime()) / 1000
     if (diffSeconds > 120) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Cancellation window has expired (2 minutes)' }) }
     await client.query(`UPDATE venue_bookings SET status='cancelled' WHERE venue_booking_id=$1`, [req.params.venueBookingId])
-    // Restore the exact slot so it appears again in available venue searches.
-    // Fallback upsert handles legacy data where the booked row may not exist.
     const restoreAvailability = await client.query(
       `UPDATE venue_availability
        SET status='available', event_id=NULL
