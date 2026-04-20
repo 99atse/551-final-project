@@ -280,7 +280,7 @@ export function EventQuery() {
                       <Label htmlFor="city">City</Label>
                       <Input
                         id="city"
-                        placeholder="e.g. San Francisco"
+                        placeholder="e.g. Boston"
                         value={filters.city}
                         onChange={(e) => setFilters({ ...filters, city: e.target.value })}
                       />
