@@ -53,7 +53,7 @@ INSERT INTO events (name, venue_id, event_time_range, capacity, type, status, is
 -- Concerts/Festivals (events 1–8)
 ('SoCal Summer Fest',             4, '[2026-07-04 14:00, 2026-07-04 23:00)', 15000, 'Concerts/Festivals', 'scheduled', FALSE,
  'Annual Fourth of July festival at Hollywood Bowl. Large GA pool for UC3 concurrent purchase demo.', NULL),
-('LA Jazz Nights — Sold-Out VIP', 1, '[2026-09-20 19:00, 2026-09-20 23:00)',  1850, 'Concerts/Festivals', 'scheduled', FALSE,
+('LA Jazz Nights', 1, '[2026-09-20 19:00, 2026-09-20 23:00)',  1850, 'Concerts/Festivals', 'scheduled', FALSE,
  'Intimate jazz evening at The Wiltern. Single VIP Pit seat drives UC1 last-ticket race.', 4.70),
 ('Greek Theatre Open Air',       10, '[2026-06-28 18:00, 2026-06-28 22:30)',  5500, 'Concerts/Festivals', 'scheduled', FALSE,
  'Outdoor rock series. One Front Row seat is unbooked in UC2 to demonstrate MVCC read consistency.', NULL),
@@ -274,8 +274,8 @@ INSERT INTO tickets (event_id, type, status, seat_location, face_value_price, qu
 (2, 'VIP', 'sold',      'Orchestra, Row A, Seat 16', 150.00, 1, 1),  -- 49
 (2, 'VIP', 'sold',      'Orchestra, Row A, Seat 17', 150.00, 1, 1),  -- 50
 (2, 'VIP', 'sold',      'Orchestra, Row A, Seat 18', 150.00, 1, 1),  -- 51
-(2, 'VIP', 'available', 'Orchestra, Row A, Seat 19', 150.00, 1, 0),  -- 52
-(2, 'VIP', 'available', 'Orchestra, Row A, Seat 20', 150.00, 1, 0),  -- 53
+(2, 'VIP', 'sold',      'Orchestra, Row A, Seat 19', 150.00, 1, 1),  -- 52
+(2, 'VIP', 'sold',      'Orchestra, Row A, Seat 20', 150.00, 1, 1),  -- 53
 
 -- *** UC1 LAST TICKET ***
 -- The only remaining VIP Pit seat. Two sessions race to set
