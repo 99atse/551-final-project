@@ -650,7 +650,19 @@ app.post('/api/bookings/ticket', async (req, res) => {
         [transactionId, selection.ticket_id, selection.unit_price * selection.quantity_to_book]
       )
       await client.query(
-        `UPDATE tickets SET quantity_sold = quantity_sold + $1 WHERE ticket_id = $2`,
+        `UPDATE tickets
+         SET quantity_sold = quantity_sold + $1,
+             status = CASE
+               WHEN seat_location <> 'GA' AND (quantity_sold + $1) > 0 THEN 'sold'::ticket_status
+               WHEN (quantity_sold + $1) >= quantity THEN 'sold'::ticket_status
+               WHEN (quantity_sold + $1) > 0 THEN
+                 CASE
+                   WHEN seat_location = 'GA' OR quantity > 1 THEN 'reserved'::ticket_status
+                   ELSE status
+                 END
+               ELSE 'available'::ticket_status
+             END
+         WHERE ticket_id = $2`,
         [selection.quantity_to_book, selection.ticket_id]
       )
     }
@@ -791,10 +803,40 @@ app.patch('/api/bookings/ticket/:transactionId/cancel', async (req, res) => {
       [req.params.transactionId]
     )
     for (const row of ticketRows.rows) {
-      await client.query(`UPDATE tickets SET quantity_sold = GREATEST(quantity_sold - $1, 0) WHERE ticket_id = $2`, [parseInt(row.qty), row.ticket_id])
+      await client.query(
+        `UPDATE tickets
+         SET quantity_sold = GREATEST(quantity_sold - $1, 0),
+             status = CASE
+               WHEN seat_location <> 'GA' AND GREATEST(quantity_sold - $1, 0) > 0 THEN 'sold'::ticket_status
+               WHEN GREATEST(quantity_sold - $1, 0) >= quantity THEN 'sold'::ticket_status
+               WHEN GREATEST(quantity_sold - $1, 0) > 0 THEN
+                 CASE
+                   WHEN seat_location = 'GA' OR quantity > 1 THEN 'reserved'::ticket_status
+                   ELSE status
+                 END
+               ELSE 'available'::ticket_status
+             END
+         WHERE ticket_id = $2`,
+        [parseInt(row.qty), row.ticket_id]
+      )
     }
+
+    // Mark refunded line items as negative to reflect reversal of original purchase amount.
+    await client.query(
+      `UPDATE transaction_tickets
+       SET price_paid = -ABS(price_paid)
+       WHERE transaction_id = $1`,
+      [req.params.transactionId]
+    )
+
     await client.query(`UPDATE transactions SET status='cancelled' WHERE transaction_id=$1`, [req.params.transactionId])
-    await client.query(`UPDATE payments SET payment_status='refunded' WHERE transaction_id=$1`, [req.params.transactionId])
+    await client.query(
+      `UPDATE payments
+       SET payment_status='refunded',
+           total_amount = -ABS(total_amount)
+       WHERE transaction_id=$1`,
+      [req.params.transactionId]
+    )
     await client.query('COMMIT')
     res.json({ success: true, message: 'Booking cancelled and tickets released' })
   } catch (err) {

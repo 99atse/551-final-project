@@ -486,7 +486,7 @@ export function AnalyticsQuery() {
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <Label>City</Label>
-                          <Input placeholder="e.g. Boston" value={eventFilters.city} onChange={(e) => setEventFilters({ ...eventFilters, city: e.target.value })} />
+                          <Input placeholder="e.g. San Francisco" value={eventFilters.city} onChange={(e) => setEventFilters({ ...eventFilters, city: e.target.value })} />
                         </div>
                         <div>
                           <Label>State</Label>
@@ -559,7 +559,7 @@ export function AnalyticsQuery() {
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <Label>City</Label>
-                          <Input placeholder="e.g. Boston" value={venueFilters.city} onChange={(e) => setVenueFilters({ ...venueFilters, city: e.target.value })} />
+                          <Input placeholder="e.g. San Francisco" value={venueFilters.city} onChange={(e) => setVenueFilters({ ...venueFilters, city: e.target.value })} />
                         </div>
                         <div>
                           <Label>State</Label>

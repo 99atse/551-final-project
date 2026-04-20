@@ -303,7 +303,7 @@ export function VenueQuery() {
                 <Label htmlFor="city">City</Label>
                 <Input
                   id="city"
-                  placeholder="e.g. Boston"
+                  placeholder="e.g. San Francisco"
                   value={filters.city}
                   onChange={(e) => setFilters({ ...filters, city: e.target.value })}
                 />

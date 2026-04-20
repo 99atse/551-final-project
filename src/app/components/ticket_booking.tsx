@@ -567,6 +567,7 @@ export function BookingTicket() {
                           id="city"
                           value={bookingData.city}
                           onChange={(e) => setBookingData({ ...bookingData, city: e.target.value })}
+                          placeholder="San Francisco"
                           className={formErrors.city ? 'border-destructive' : ''}
                         />
                         {formErrors.city && <p className="text-sm text-destructive mt-1">{formErrors.city}</p>}
