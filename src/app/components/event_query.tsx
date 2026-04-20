@@ -344,25 +344,25 @@ export function EventQuery() {
                         </div>
                       </div>
 
-                          <div>
-                            <Label htmlFor="ticketType">Ticket Type</Label>
-                            <Select
-                              value={filters.ticketType}
-                              onValueChange={(value) => setFilters({ ...filters, ticketType: value })}
-                            >
-                              <SelectTrigger id="ticketType">
-                                <SelectValue placeholder="Any type" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="All">Any type</SelectItem>
-                                <SelectItem value="General Admission">General Admission</SelectItem>
-                                <SelectItem value="VIP">VIP</SelectItem>
-                                <SelectItem value="Premium">Premium</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </>
-                      )}
+                      <div>
+                        <Label htmlFor="ticketType">Ticket Type</Label>
+                        <Select
+                          value={filters.ticketType}
+                          onValueChange={(value) => setFilters({ ...filters, ticketType: value })}
+                        >
+                          <SelectTrigger id="ticketType">
+                            <SelectValue placeholder="Any type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="All">Any type</SelectItem>
+                            <SelectItem value="General Admission">General Admission</SelectItem>
+                            <SelectItem value="VIP">VIP</SelectItem>
+                            <SelectItem value="Premium">Premium</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
+                  )}
 
                   {isOrganizer && (
                     <>
@@ -556,31 +556,52 @@ export function EventQuery() {
                                         <span className="text-muted-foreground">Venue Type:</span>
                                         <p>{event.venue_type}</p>
                                       </div>
+                                      {event.min_ticket_price != null && (
+                                        <div>
+                                          <span className="text-muted-foreground">Ticket Price:</span>
+                                          <p>
+                                            ${Number(event.min_ticket_price).toFixed(2)}
+                                            {event.max_ticket_price !== event.min_ticket_price &&
+                                              ` - $${Number(event.max_ticket_price).toFixed(2)}`}
+                                          </p>
+                                        </div>
+                                      )}
                                     </>
                                   )}
-                                  {isAttendee && event.status === 'scheduled' && event.tickets_available > 0 && (
-                                    <>
-                                      <Separator />
-                                      <div className="flex items-center justify-end">
+                                </div>
+
+                                {/* Action row — bottom right, outside the grid */}
+                                {isAttendee && event.status === 'scheduled' && (
+                                  <>
+                                    <Separator />
+                                    <div className="flex justify-end">
+                                      {event.tickets_available > 0 ? (
                                         <Button asChild>
                                           <Link to={`/${userType}/category/${category}/book-ticket/${event.event_id}`}>
                                             Book Tickets
                                           </Link>
                                         </Button>
-                                      </div>
-                                    </>
-                                  )}
-                                  
-                                  {isAttendee && event.status === 'scheduled' && event.tickets_available === 0 && (
-                                    <>
-                                      <Separator />
-                                      <div className="text-sm text-muted-foreground text-center py-2 bg-muted rounded">
-                                        Sold Out - No tickets available
-                                      </div>
-                                    </>
-                                  )}
- 
-                                </div>
+                                      ) : (
+                                        <div className="text-sm text-muted-foreground py-2 bg-muted rounded px-3">
+                                          Sold Out
+                                        </div>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
+
+                                {isResearcher && (
+                                  <>
+                                    <Separator />
+                                    <div className="flex justify-end">
+                                      <Button asChild variant="outline">
+                                        <Link to={`/${userType}/category/${category}/analytics/${event.event_id}`}>
+                                          View Event Analytics
+                                        </Link>
+                                      </Button>
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             </CardContent>
                           </Card>
