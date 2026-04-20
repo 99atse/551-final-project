@@ -1,6 +1,8 @@
 -- PostgreSQL Database Setup Script for Event Management System
 -- Note: Create the database first, then connect to it before running this script
 CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS pageinspect;
+CREATE EXTENSION IF NOT EXISTS pg_visibility;
 
 -- Drop tables in reverse order of dependencies
 DROP TABLE IF EXISTS preferences CASCADE;
