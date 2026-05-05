@@ -75,7 +75,7 @@ For the database, set it up in a database management tool for PostgreSQL databas
    ```bash
    psql -d event_db -f database/seed.sql
    ```
-4. Optional: create analytics views:
+4. Create analytics views:
 
    ```bash
    psql -d event_db -f database/views.sql
@@ -83,7 +83,7 @@ For the database, set it up in a database management tool for PostgreSQL databas
 
 ## Running the App
 
-Run backend API and frontend dev server together:
+Run the following command in the terminal to start the backend API and frontend dev server together:
 
 ```bash
 npm run dev
@@ -105,17 +105,19 @@ Default URLs:
 ```text
 .
 |- database/
+|  |- gist_use_case.sql
+|  |- mvcc_user_1.sql
+|  |- mvcc_user_2.sql
 |  |- schema.sql
 |  |- seed.sql
-|  |- views.sql
-|  \- use_case_notes.md
+|  \- views.sql
 |- src/
 |  |- app/
 |  |  |- components/
+|  |  |- App.tsx
 |  |  \- routes.ts
 |  |- styles/
-|  |- main.tsx
-|  \- App.tsx
+|  \- main.tsx
 |- main.js
 |- package.json
 |- postcss.config.mjs
